@@ -361,7 +361,7 @@ part names its options and a recommendation, for discussion.
   that eases from 0 to 1 over a named duration, with the recipe tween
   where the families match, which the app decides per transition. The
   camera's distance tweens alongside, from section 5.
-- **Styles to start with**, a proposal for open question 4: the Victoria
+- **Styles to start with**, a proposal for open question 2: the Victoria
   sponge of the proof of concept; a tall tapered tier, chocolate; a bundt
   ring by revolution; a square cake; and a cupcake with a domed top.
   Three would exercise all three mechanisms: a tween within the round
@@ -396,7 +396,7 @@ part names its options and a recommendation, for discussion.
   the bound (**Measured**). The array's size is a define, a choice the
   shader cannot change at runtime, as CLAUDE.md allows; how Three.js
   uploads such an array is in section 1.
-- **Where a bite lands** is open question 5. A tap on the cake needs the
+- **Where a bite lands** is open question 3. A tap on the cake needs the
   point under the pointer, which the shader knows and the page does not.
   Marching the field again in JavaScript would make a second copy of it,
   against the single source of truth; the cheap route is to intersect
@@ -435,7 +435,7 @@ part names its options and a recommendation, for discussion.
   in the shading only, from one base-field read at the hit that darkens
   and tilts the surface, cost eight spheres per hit instead of per step,
   but leave the silhouette, the cut's profile, the shadows and the inside
-  of a bite smooth: open question 6.
+  of a bite smooth: open question 4.
 - **The recipe** gains the holes' cell size, depth and octave count, so a
   dense crumb and an open one are styles, and a transition tweens them.
 
@@ -449,26 +449,29 @@ part names its options and a recommendation, for discussion.
   from Three.js (**Code**, pureland-simulator on 2026-11-24). Both are
   the Lead Developer's own code under the same licence, so Presentation
   Mode can port them as they are.
-- Two ways to apply the spin to a field:
-  - **A. Turntable: turn the cake under fixed lights**, as the paper
-    turns. The field rotates its sample point by the inverse spin before
-    evaluating, one 3 by 3 matrix multiply per sample, which keeps every
-    distance exact, since a rotation preserves them. The slice, the bites
-    and the holes turn with the cake, and the key light stays over the
-    viewer's shoulder, so features pass through the light as the cake
-    turns, as pureland-simulator's paper does.
-  - **B. Orbit: move the camera round a fixed cake**, as the proof of
-    concept's slow circle does today. Free in the shader, since the quad
-    already reads the camera, and `OrbitControls` would do it in one
-    vendored addon file with no relative imports (**Source**, r187's
-    `examples/jsm/controls/OrbitControls.js`, read on 2026-11-24). But
-    the lights are fixed to the world, so the lit side of the cake stays
-    put and the viewer orbits round to the shadowed side.
-  - Recommendation: **A**, for the same feel as pureland-simulator and
-    the same lighting from every angle, with the ported drag and spin
-    modules. The slow idle circle of the proof of concept can stay as a
-    slow idle turn of the turntable, stopping on the first drag, or go:
-    an open question.
+- The cake turns as a turntable, under lights that keep their place
+  beside the viewer, as pureland-simulator's paper does, so the key light
+  stays over the viewer's shoulder and features pass through it as the
+  cake turns. It is built without touching the field: the camera and the
+  lights ride one `Group`, which `docs/src/main.js` turns round the cake
+  by the inverse of the cake's turn, so the march costs nothing more and
+  the field's world space stays the cake's own, where bites and holes can
+  be placed (**Code**). Orbiting the camera round a fixed, fixedly lit
+  cake, as the proof of concept did, was rejected: the viewer would
+  orbit round to the shadowed side.
+- The drag is ported as `docs/src/input/drag.js`, without
+  pureland-simulator's claimed presses, and the spin as
+  `docs/src/input/view.js`, which adds a zoom to the pitch and yaw. A
+  drag turns and tilts the cake; the scroll wheel, a trackpad's scroll
+  or pinch, Safari's own pinch events, a touch screen's two-finger pinch,
+  and a Cmd-drag up and down, or a Ctrl-drag off Apple devices, zoom the
+  camera between 0.15 m and 1.2 m, through `docs/src/input/zoom.js`; a
+  double-click eases the turn, tilt and zoom back to the view at load
+  (**Code**).
+- The proof of concept's slow turn stays, as a slow turn of the
+  turntable at 12° per second, paused while a press holds the cake and
+  resumed from the new angle on release. A double-click eases back only
+  the drag's turn, never the slow turn's (**Code**).
 - The camera fits the cake's bounding sphere once per style, through a
   port of pureland-simulator's `distanceToFitSphere()`, 22 lines of pure
   maths (**Code**), and tweens its distance as the style blends, so a
@@ -577,7 +580,7 @@ part names its options and a recommendation, for discussion.
   Manual QA therefore times frames with `performance.now()` in the
   animation loop, and the test for being fragment-bound is halving the
   pixel ratio: a frame time that halves with it is the shader's.
-- **What smooth means**, on which phone, is open question 8. No published
+- **What smooth means**, on which phone, is open question 6. No published
   frame rate for a simple raymarched scene on a mid-range phone was found,
   only hearsay of heavy cloud shaders at a few frames per second on 2015
   devices and of a cheap phone recovering from 18 to 55 frames per second
@@ -590,11 +593,11 @@ Developer can QA in the browser; the seam between each pair is where one
 could be accepted and the next rejected. Each is drafted by `/draft-plan`
 once the open questions it rests on are ruled.
 
-1. **Plan 02, Turning the cake, and the toolbar**: the drag and spin
-   modules ported, the turntable applied in the field, Escape hiding the
-   toolbar, the camera fitted to the cake's sphere, and the idle turn as
-   ruled. Visible proof: a drag turns the cake, and a double-click eases
-   it back.
+1. **Plan 02, The toolbar and the camera's fit**: Escape hiding the
+   toolbar, and the camera fitted to the cake's sphere. The turntable,
+   the zoom and the slow turn are already built, as
+   [section 5](#5-turning-the-cake-and-the-camera) records. Visible
+   proof: Escape hides the toolbar, and a taller cake stays in frame.
 2. **Plan 03, Styles and the transition**: the recipe as data with its
    JSON shape, the first styles as radios, the field reading a recipe,
    the tween within a family and the blend across families by one
@@ -619,29 +622,24 @@ once the open questions it rests on are ruled.
 For `/feed-me`, easiest first. Each names what the brief leaves open; the
 outline above gives the background.
 
-1. **Idle turn.** Keep the proof of concept's slow turn when nothing is
-   happening, stop it on the first drag, or drop it for a still cake that
-   turns only when dragged, as the paper does?
-2. **Turntable or orbit.** Turn the cake under fixed lights, as the paper
-   turns, or orbit the camera round a fixed, fixedly lit cake?
-3. **Icing colour.** Does each style fix its colours in its recipe, do
+1. **Icing colour.** Does each style fix its colours in its recipe, do
    swatches recolour the icing of any style, or both, with the recipe's
    colour as the swatch chosen when the style is?
-4. **Which styles first.** Section 2 proposes five, a Victoria sponge, a
+2. **Which styles first.** Section 2 proposes five, a Victoria sponge, a
    tall chocolate tier, a bundt ring, a square cake and a cupcake, and
    suggests three to begin with, one per transition mechanism; which, and
    how many?
-5. **How a bite is placed.** By a button that bites where the viewer is
+3. **How a bite is placed.** By a button that bites where the viewer is
    looking, by a tap on the cake, or at random along the rim? And does
    Undo put it back, or does choosing a style heal the cake?
-6. **Where the holes show.** In the field, so a bite's inside and the cut
+4. **Where the holes show.** In the field, so a bite's inside and the cut
    faces are truly pitted, or only in the shading of those faces, which
    is cheaper and flatter?
-7. **The silhouette.** Accept the aliased edge, write coverage alpha from
+5. **The silhouette.** Accept the aliased edge, write coverage alpha from
    each missed ray's closest approach, which is nearly free, add FXAA for
    a render target and one vendored file, or supersample on desktops
    only?
-8. **The phone budget.** Which phone, and what frame rate on it, counts as
+6. **The phone budget.** Which phone, and what frame rate on it, counts as
    smooth enough; and is the first lever a lower pixel ratio on narrow
    viewports?
 
@@ -719,7 +717,15 @@ outline above gives the background.
 
 ## Decision record
 
-None yet: the open questions above await `/feed-me`.
+- **Turntable, not orbit.** The cake turns under lights that keep their
+  place beside the viewer; see
+  [section 5](#5-turning-the-cake-and-the-camera).
+- **The slow turn stays**, paused while a press holds the cake.
+- **Zoom by the standard inputs**: the scroll wheel and a trackpad's
+  scroll, with every pinch, and a Cmd-drag on Apple devices or a Ctrl-drag
+  on others.
+
+The remaining open questions above await `/feed-me`.
 
 ## Audit
 
@@ -732,3 +738,9 @@ None yet: the open questions above await `/feed-me`.
   primitives and Three.js uniform rules verified against their sources;
   five plans proposed; eight open questions, with the agent's
   recommendations where it has one.
+- **2026-11-24T22:42:50Z** — **ruled**: the Lead Developer ruled open
+  questions 1 and 2, the slow turn paused while held and the turntable,
+  and asked for zoom by scroll, every pinch and Cmd-drag; built directly,
+  without a plan, and passed the Lead Developer's manual QA the same day.
+  Section 5, Plan 02 and the decision record updated; the open questions
+  renumbered.

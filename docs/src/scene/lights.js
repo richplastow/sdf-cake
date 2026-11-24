@@ -17,8 +17,9 @@ const KEY_LIGHT_POSITION = [0.5, 1, 0.8]; // metres: right, above, in front
  * - The key light shines at its default target, the origin, where the cake
  *   sits. The shader marches the cake's own soft shadows along it: no
  *   shadow map is involved.
- * - Three.js hands each light's direction to the shader in view space, so
- *   the lights stay fixed to the world as the camera circles.
+ * - The positions are relative to a viewer on the +Z side. src/main.js
+ *   mounts the lights on one rig with the camera, so they keep their
+ *   place beside the viewer as the cake turns.
  * @returns The lights, to add to the scene.
  */
 export const createLights = () => {
