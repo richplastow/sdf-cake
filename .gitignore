@@ -1,0 +1,15 @@
+# Operating systems
+.DS_Store
+Thumbs.db
+
+# Editors and agents
+.claude/
+CLAUDE.md
+.idea/
+*.swp
+
+# Logs
+*.log
+
+# Scratch files, such as orchestrate-plan readouts
+tmp-*

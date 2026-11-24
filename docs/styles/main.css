@@ -1,0 +1,147 @@
+/*
+ * The page follows the operating system's light or dark mode through
+ * `color-scheme`, `light-dark()` and the system colours `Canvas` and
+ * `CanvasText`, so it needs no media query. The cake keeps its own colours
+ * whatever the colour scheme: src/sdf/cake.js sets them. Where a ray misses
+ * the cake, the fragment shader writes a clear pixel, so the page colour
+ * shows through the transparent canvas as the background.
+ */
+
+:root {
+  --choice-border-width: 1px; /* the thin border round each choice */
+  /* a choice's background on hover: a faint tint of the text colour */
+  --choice-hover-color: color-mix(in srgb, CanvasText 10%, transparent);
+  --choice-hover-duration: 0.15s; /* the background's fade on hover */
+  --choice-padding: 0.25rem 0.75rem; /* between a choice's border and text */
+  --choice-radius: 0.375rem; /* each choice's rounded corners */
+  --controls-gap: 0.5rem; /* between neighbouring controls */
+  --controls-offset: 1.5rem; /* the toolbar's from the viewport's bottom */
+  /* the page's colour, showing through the transparent canvas: a light grey
+     on the light page, and the system's own on the dark page */
+  --page-color: light-dark(#f0f0f0, Canvas);
+  /* draws the canvas's focus ring inside the viewport, which it fills */
+  --scene-focus-ring-inset: 4px;
+  --choice-ring-gap: 2px; /* page colour between a choice and its ring */
+  --choice-ring-width: 2px; /* the ring round the chosen choice */
+
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+}
+
+body {
+  background-color: var(--page-color);
+  color: CanvasText;
+}
+
+/*
+ * The WebGL canvas stays transparent and fills the viewport behind the page.
+ * The browser neither scrolls nor zooms on a touch drag over it, and selects
+ * no text on a mouse drag; Safari still needs the prefixed property.
+ */
+.scene {
+  position: fixed;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/*
+ * The canvas takes focus from Tab. Its ring is the browser's own, drawn
+ * inside its edges, since outside them it would fall off the viewport.
+ */
+.scene:focus-visible {
+  outline: auto;
+  outline-offset: calc(-1 * var(--scene-focus-ring-inset));
+}
+
+/*
+ * Fixed, and later in the document, so it paints over the canvas. Its box
+ * spans the viewport's width, so the pointer passes through it, and only
+ * its controls, the direct children, take it.
+ */
+.controls {
+  position: fixed;
+  inset-inline: 0;
+  bottom: var(--controls-offset);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--controls-gap);
+  pointer-events: none;
+}
+
+.controls > * {
+  pointer-events: auto;
+}
+
+/*
+ * A group of choices, such as the modes, wraps as a group on a narrow
+ * toolbar.
+ */
+.choices {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--controls-gap);
+}
+
+/*
+ * A group the mode does not show is `hidden`, which the `display` above
+ * would otherwise override, since an author rule outranks the browser's own
+ * `[hidden] { display: none }`.
+ */
+.choices[hidden] {
+  display: none;
+}
+
+/*
+ * Each choice is a radio input inside its label, which is drawn as a plain
+ * button: no fill, a thin border and rounded corners, in the text colour,
+ * with a faint tint of it fading in on hover.
+ */
+.choices label {
+  position: relative;
+  padding: var(--choice-padding);
+  border: var(--choice-border-width) solid CanvasText;
+  border-radius: var(--choice-radius);
+  cursor: pointer;
+  transition: background-color var(--choice-hover-duration);
+}
+
+.choices label:hover {
+  background-color: var(--choice-hover-color);
+}
+
+/*
+ * Hidden but still focusable, so Tab and the arrow keys reach it: never
+ * `display: none` or `visibility: hidden`, since the arrow keys skip a
+ * radio that cannot take focus. The pointer passes through it to the
+ * label, which checks it on a click.
+ */
+.choices input {
+  position: absolute;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* The browser's own focus ring, round the label of the focused choice. */
+.choices label:has(:focus-visible) {
+  outline: auto;
+}
+
+/*
+ * Each group's chosen choice's ring is a box-shadow, a gap of page colour
+ * inside a ring of text colour, which follows a choice's rounded corners.
+ * An outline here would override the browser's own focus ring, and focus
+ * lands on the chosen radio.
+ */
+.choices label:has(:checked) {
+  box-shadow:
+    0 0 0 var(--choice-ring-gap) var(--page-color),
+    0 0 0 calc(var(--choice-ring-gap) + var(--choice-ring-width)) CanvasText;
+}

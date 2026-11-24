@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SDF Cake</title>
+    <link
+      rel="icon"
+      type="image/png"
+      href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR42mN4NmsHSYhhVMOohuGrAQAkCjgfnU0snQAAAABJRU5ErkJggg=="
+    />
+    <link rel="stylesheet" href="styles/main.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "./vendor/three/build/three.module.js",
+          "three/addons/": "./vendor/three/examples/jsm/"
+        }
+      }
+    </script>
+    <script type="module" src="src/main.js"></script>
+  </head>
+  <body>
+    <canvas
+      class="scene"
+      tabindex="0"
+      role="img"
+      aria-label="A round iced cake with a slice cut out, turning slowly"
+    ></canvas>
+    <div class="controls">
+      <div class="choices" role="radiogroup" aria-label="Mode">
+        <label>
+          <input type="radio" name="mode" value="presentation" checked />
+          Presentation
+        </label>
+      </div>
+    </div>
+  </body>
+</html>

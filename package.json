@@ -1,0 +1,15 @@
+{
+  "name": "sdf-cake",
+  "version": "0.0.1",
+  "description": "Rendering cake with signed distance functions",
+  "homepage": "https://richplastow.com/sdf-cake/",
+  "bugs": "https://github.com/richplastow/sdf-cake/issues",
+  "license": "MIT",
+  "author": "Rich Plastow",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/richplastow/sdf-cake.git"
+  },
+  "private": true,
+  "type": "module"
+}
