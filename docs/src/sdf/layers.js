@@ -55,29 +55,52 @@ export const layersChunk = /* glsl */ `
     );
   }
 
+  // How tall a slot must be to join the smoothed stack at the full blend,
+  // in metres: half the thinnest layer any recipe holds, so every layer at
+  // rest blends in full. A thinner slot, growing from nothing or vanishing,
+  // blends in proportion, so its lift of the smoothed stack's top, up to a
+  // quarter of its blend, fades as it does rather than vanishing in one
+  // frame as its height crosses 0. The blend changes with time, not across
+  // space, so the field keeps its bound.
+  const float LAYER_BLEND_FADE_METERS = 0.002;
+  // The least blend a slot joins with, in metres, since smoothMinDistance()
+  // divides by its blend: a lift of at most 0.25 micrometres.
+  const float MIN_LAYER_BLEND_METERS = 1e-6;
+
   // The field of the stack at q, carried on from the stack's field so far:
   // x is the distance in metres to the nearest layer, negative inside it,
   // y that layer's slot as its material id, and z the smoothed stack's
   // distance in metres, the layers joined by smoothMinDistance() with the
-  // blend, in metres, which the topping's coat follows. It walks the slots
-  // in order, leaving out the skipped slot, already in the stack, and any
-  // slot whose bound is the blend or more beyond the nearest distance so
-  // far, of any part: such a slot cannot lower the cake's least distance,
-  // and lies too far from the nearest layer to change the smoothed one.
+  // blend, in metres, faded for a slot thinner than
+  // LAYER_BLEND_FADE_METERS, which the topping's coat follows. It walks
+  // the slots in order, folding every slot it reaches into z in slot
+  // order, since the smooth minimum is not associative: the seed slot, -1
+  // for none, already in x and y, joins z at its own place with its
+  // distance as given, and any other slot whose bound is the blend or more
+  // beyond the nearest distance so far, of any part, is left out: such a
+  // slot cannot lower the cake's least distance, and lies too far from the
+  // nearest layer to change the smoothed one.
   vec3 layersField(
     vec2 q,
     float blend,
     float nearest,
-    int skippedSlot,
+    int seedSlot,
+    float seedDistance,
     vec3 stack
   ) {
     for (int slot = 0; slot < LAYER_SLOTS; slot++) {
-      if (slot == skippedSlot || layerHeightsMeters[slot] <= 0.0) continue;
-      if (layerBoundDistance(q, slot) >= nearest + blend) continue;
-      float layer = layerDistance(q, slot);
-      if (layer < stack.x) stack.xy = vec2(layer, float(slot));
-      stack.z = smoothMinDistance(stack.z, layer, blend);
-      nearest = min(nearest, layer);
+      float height = layerHeightsMeters[slot];
+      if (height <= 0.0) continue;
+      float layer = seedDistance;
+      if (slot != seedSlot) {
+        if (layerBoundDistance(q, slot) >= nearest + blend) continue;
+        layer = layerDistance(q, slot);
+        if (layer < stack.x) stack.xy = vec2(layer, float(slot));
+        nearest = min(nearest, layer);
+      }
+      float fade = clamp(height / LAYER_BLEND_FADE_METERS, 0.0, 1.0);
+      float slotBlend = max(blend * fade, MIN_LAYER_BLEND_METERS);
+      stack.z = smoothMinDistance(stack.z, layer, slotBlend);
     }
     return stack;
   }

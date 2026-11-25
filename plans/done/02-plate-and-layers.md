@@ -161,7 +161,7 @@ type: plan
    and equal when `steps` is 1.
 7. **The resolved cake** is the resolver's output: plain numbers in the
    shape the uniforms take, so the writer that uploads it and, in
-   [Plan 05](../todo/05-transitions.md), the springs that animate it share one
+   [Plan 05](05-transitions.md), the springs that animate it share one
    shape. Its layer array always has `LAYER_SLOTS` entries, the unused
    ones inert at zero height, radii and rounding, their colour `#000000`
    and roughness 0; this example leaves four inert entries out:

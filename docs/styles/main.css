@@ -8,7 +8,16 @@
  */
 
 :root {
-  --controls-gap: 0.5rem; /* between neighbouring controls */
+  /* the arrow buttons that walk the cakes: a translucent disc behind a
+     chevron, in the page's colours */
+  --cake-arrow-background: light-dark(rgb(255 255 255 / 0.7), rgb(0 0 0 / 0.5));
+  --cake-arrow-color: CanvasText;
+  --cake-arrow-icon-size: 1.5rem;
+  --cake-arrow-size: 3rem; /* the button's width and height */
+  --controls-gap: 0.5rem; /* the least between neighbouring controls */
+  /* the toolbar's ends from the viewport's sides, leaving the space
+     between the arrow buttons for the controls that go between them */
+  --controls-inset: 1.5rem;
   --controls-offset: 1.5rem; /* the toolbar's from the viewport's bottom */
   /* the page's colour, showing through the transparent canvas: a light grey
      on the light page, and the system's own on the dark page */
@@ -66,19 +75,53 @@ body {
 /*
  * Fixed, and later in the document, so it paints over the canvas. Its box
  * spans the viewport's width, so the pointer passes through it, and only
- * its controls, the direct children, take it.
+ * its controls, the direct children, take it. The arrow buttons sit at its
+ * two ends.
  */
 .controls {
   position: fixed;
   inset-inline: 0;
   bottom: var(--controls-offset);
   display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
+  justify-content: space-between;
+  align-items: center;
   gap: var(--controls-gap);
+  padding-inline: var(--controls-inset);
   pointer-events: none;
 }
 
 .controls > * {
   pointer-events: auto;
+}
+
+/*
+ * Each arrow button is a disc holding a chevron drawn in its text colour,
+ * with no visible text: its `aria-label` names it. Its focus ring is the
+ * browser's own.
+ */
+.cake-arrow {
+  display: grid;
+  place-items: center;
+  width: var(--cake-arrow-size);
+  height: var(--cake-arrow-size);
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background-color: var(--cake-arrow-background);
+  color: var(--cake-arrow-color);
+  cursor: pointer;
+}
+
+.cake-arrow:focus-visible {
+  outline: auto;
+}
+
+.cake-arrow svg {
+  width: var(--cake-arrow-icon-size);
+  height: var(--cake-arrow-icon-size);
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
 }

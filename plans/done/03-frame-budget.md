@@ -34,7 +34,7 @@ type: plan
 - Depends on [Plan 02](./02-plate-and-layers.md); feeds
   [Plan 04](./04-topping.md) and every plan after, each of which adds its
   parts to the field this plan makes cheaper, and
-  [Plan 05](../todo/05-transitions.md), whose camera fit reads the bound this
+  [Plan 05](05-transitions.md), whose camera fit reads the bound this
   plan reshapes.
 - Needed because every part of the field costs every pixel on every step,
   and each later plan adds parts, so the frame only gets dearer from here.

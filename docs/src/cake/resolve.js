@@ -55,8 +55,8 @@ export const EATEN_MAX_RADIANS = FULL_TURN_RADIANS - SLIVER_RADIANS;
  *   topping, or a cake with no layers, resolves to a topping of all zeros,
  *   coloured `#000000`.
  * - The stack's cylinder grows by the topping's thickness, and the most its
- *   smoothing can push the coat further out, in radius, and by its
- *   thickness plus its pile at the top.
+ *   smoothing can push the coat further out, in radius, and by the same
+ *   plus its pile at the top, as writeCakeBounds() works them out.
  * - The topping's `translucency`, 0 to 1, defaults to 0, opaque.
  * - Colours stay sRGB `#rrggbb` strings, as the palette gives them.
  * @param recipe A recipe, as src/cake/recipes.js holds them.
@@ -93,30 +93,10 @@ export const resolveRecipe = (recipe) => {
     });
   }
 
-  // The plate's stroked profile reaches half its thickness past the rim,
-  // down to its underside, one thickness below the origin, and up to the
-  // lip's top, at the sweep's height plus the lip's.
-  const plateBound = boundingCylinder(
-    -plate.thicknessMeters,
-    plate.rimRadiusMeters > 0
-      ? plate.rimRadiusMeters + 0.5 * plate.thicknessMeters
-      : 0,
-    plate.sweepHeightMeters + plate.lipHeightMeters,
-  );
-
-  // The stack's spans its used layers, at the wider of each one's radii.
   // The crown is the used layer with the highest top.
-  let stackBottomMeters = stackTopMeters;
-  let widestRadiusMeters = 0;
   let crown = null;
   for (const layer of layers) {
     if (layer.heightMeters <= 0) continue;
-    stackBottomMeters = Math.min(stackBottomMeters, layer.bottomMeters);
-    widestRadiusMeters = Math.max(
-      widestRadiusMeters,
-      layer.bottomRadiusMeters,
-      layer.topRadiusMeters,
-    );
     if (
       !crown ||
       layer.bottomMeters + layer.heightMeters >
@@ -127,28 +107,24 @@ export const resolveRecipe = (recipe) => {
   }
 
   const topping = resolveTopping(recipe.topping, crown);
-
-  // The skirt and the full cap pass the widest layer by at most the
-  // thickness and the smoothing's bulge, and the pile rises above the cap's
-  // top.
-  const stackBound = boundingCylinder(
-    stackBottomMeters,
-    widestRadiusMeters +
-      (1 + SKIRT_BULGE_PER_THICKNESS) * topping.thicknessMeters,
-    stackTopMeters + topping.thicknessMeters + topping.pileMeters,
-  );
+  const bounds = { plate: {}, stack: {} };
+  writeCakeBounds(bounds, layers, plate, topping);
 
   return {
     plate,
     layers,
     topping,
-    eatenAngleRadians: Math.min(
-      recipe.eaten.minFraction * FULL_TURN_RADIANS,
-      EATEN_MAX_RADIANS,
-    ),
-    bounds: { plate: plateBound, stack: stackBound },
+    eatenAngleRadians: eatenRadiansForFraction(recipe.eaten.minFraction),
+    bounds,
   };
 };
+
+/** #### Gives the eaten angle for a fraction of a full turn
+ * @param fraction The fraction of a full turn eaten, 0 to 1.
+ * @returns The eaten angle, in radians, clamped to `EATEN_MAX_RADIANS`.
+ */
+export const eatenRadiansForFraction = (fraction) =>
+  Math.min(fraction * FULL_TURN_RADIANS, EATEN_MAX_RADIANS);
 
 /** #### Lists what is wrong with a recipe, as sentences
  * - A recipe needs at least two parts, counting the plate, each layer, a
@@ -255,26 +231,102 @@ export const validateRecipe = (recipe) => {
   return problems;
 };
 
-/** #### Gives the cylinder on the Y axis that bounds a part, with margin
+/** #### Works out a cake's two bounding cylinders, in place
+ * - The plate's spans its underside to its lip's top, of radius its rim
+ *   plus half its thickness.
+ * - The stack's spans the lowest bottom of its used layers, those taller
+ *   than 0, to their highest top, of radius the widest of their two radii,
+ *   grown by the topping's thickness and the most its smoothing can push
+ *   the coat further out, in radius, and by the same and its pile at the
+ *   top.
+ * - Each grows by `BOUND_MARGIN_METERS`; a part a cake lacks has a
+ *   cylinder of all zeros, with no margin.
+ * - Reads lengths below 0, which a spring can pass through, as 0, so it
+ *   serves the cake in motion as well as at rest, and allocates nothing,
+ *   so it is safe on the per-frame path.
+ * @param bounds The bounds to write, mutated: `plate` and `stack`, each
+ *   its `bottomMeters`, `radiusMeters` and `topMeters`.
+ * @param layers The cake's layers, each its `bottomMeters`,
+ *   `heightMeters`, `bottomRadiusMeters` and `topRadiusMeters`.
+ * @param plate The cake's plate, its lengths in metres.
+ * @param topping The cake's topping, its lengths in metres.
+ * @returns The bounds.
+ */
+export const writeCakeBounds = (bounds, layers, plate, topping) => {
+  // The plate's stroked profile reaches half its thickness past the rim,
+  // down to its underside, one thickness below the origin, and up to the
+  // lip's top, at the sweep's height plus the lip's.
+  const plateThicknessMeters = Math.max(plate.thicknessMeters, 0);
+  writeBoundingCylinder(
+    bounds.plate,
+    -plateThicknessMeters,
+    plate.rimRadiusMeters > 0
+      ? plate.rimRadiusMeters + 0.5 * plateThicknessMeters
+      : 0,
+    Math.max(plate.sweepHeightMeters, 0) + Math.max(plate.lipHeightMeters, 0),
+  );
+
+  let stackBottomMeters = Infinity;
+  let stackTopMeters = -Infinity;
+  let widestRadiusMeters = 0;
+  for (let slot = 0; slot < layers.length; slot++) {
+    const layer = layers[slot];
+    if (layer.heightMeters <= 0) continue;
+    stackBottomMeters = Math.min(stackBottomMeters, layer.bottomMeters);
+    stackTopMeters = Math.max(
+      stackTopMeters,
+      layer.bottomMeters + layer.heightMeters,
+    );
+    widestRadiusMeters = Math.max(
+      widestRadiusMeters,
+      layer.bottomRadiusMeters,
+      layer.topRadiusMeters,
+    );
+  }
+
+  // The skirt and the full cap pass the widest layer by at most the
+  // thickness and the smoothing's bulge, and the pile rises above the
+  // cap's top, itself raised by the bulge.
+  const toppingThicknessMeters = Math.max(topping.thicknessMeters, 0);
+  const bulgedThicknessMeters =
+    (1 + SKIRT_BULGE_PER_THICKNESS) * toppingThicknessMeters;
+  writeBoundingCylinder(
+    bounds.stack,
+    stackBottomMeters,
+    widestRadiusMeters + bulgedThicknessMeters,
+    stackTopMeters + bulgedThicknessMeters + Math.max(topping.pileMeters, 0),
+  );
+  return bounds;
+};
+
+/** #### Writes the cylinder on the Y axis that bounds a part, in place
  * - Grows the part's extent by `BOUND_MARGIN_METERS` in radius and at both
  *   ends.
  * - A part of zero radius, which a cake lacks, gives a cylinder of all
  *   zeros, with no margin, which the shader treats as a miss.
+ * - Allocates nothing.
+ * @param cylinder The cylinder to write, mutated: `bottomMeters`,
+ *   `radiusMeters` and `topMeters`.
  * @param bottomMeters The part's lowest height, in metres.
  * @param radiusMeters The part's greatest distance from the Y axis, in
  *   metres.
  * @param topMeters The part's greatest height, in metres.
- * @returns The cylinder's `bottomMeters`, `radiusMeters` and `topMeters`.
  */
-const boundingCylinder = (bottomMeters, radiusMeters, topMeters) => {
+const writeBoundingCylinder = (
+  cylinder,
+  bottomMeters,
+  radiusMeters,
+  topMeters,
+) => {
   if (radiusMeters <= 0) {
-    return { bottomMeters: 0, radiusMeters: 0, topMeters: 0 };
+    cylinder.bottomMeters = 0;
+    cylinder.radiusMeters = 0;
+    cylinder.topMeters = 0;
+    return;
   }
-  return {
-    bottomMeters: bottomMeters - BOUND_MARGIN_METERS,
-    radiusMeters: radiusMeters + BOUND_MARGIN_METERS,
-    topMeters: topMeters + BOUND_MARGIN_METERS,
-  };
+  cylinder.bottomMeters = bottomMeters - BOUND_MARGIN_METERS;
+  cylinder.radiusMeters = radiusMeters + BOUND_MARGIN_METERS;
+  cylinder.topMeters = topMeters + BOUND_MARGIN_METERS;
 };
 
 /** Says whether a number lies within 0 and 1, both included. */

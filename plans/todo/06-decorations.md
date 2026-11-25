@@ -18,7 +18,7 @@ type: plan
   for the shapes and
   [domain repetition](https://iquilezles.org/articles/sdfrepetition/) for
   the scattered kind.
-- Depends on [Plan 05](05-transitions.md) for the motion and the
+- Depends on [Plan 05](../done/05-transitions.md) for the motion and the
   choreography, and on Plan 04's toppingSurfaceHeight(); feeds
   [Plan 07](07-sliders.md), whose reveal slider removes the decorations
   first.

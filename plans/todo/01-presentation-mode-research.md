@@ -580,7 +580,7 @@ accepted and the next rejected.
    and the drips driven by the coverage, with the topping's materials.
    Visible proof: a pink Victoria sponge again, piled cream on the custard
    pie, drips down the chocolate cake, and a bare cheesecake.
-4. [Plan 05, Transitions and the cake walk](05-transitions.md): the
+4. [Plan 05, Transitions and the cake walk](../done/05-transitions.md): the
    springs, the motion state, the choreography of the plate, layers,
    topping and slice, Left and Right with the arrow buttons walking the
    loop, and the camera following the cake. Visible proof: one cake

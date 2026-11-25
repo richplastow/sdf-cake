@@ -5,7 +5,7 @@
  * uniforms it reads, and the writer that copies a resolved cake into them.
  */
 
-import { Color } from "three";
+import { Color, SRGBColorSpace } from "three";
 import { LAYER_SLOTS } from "../cake/slots.js";
 import { layersChunk } from "./layers.js";
 import { plateChunk } from "./plate.js";
@@ -113,20 +113,24 @@ export const cakeChunk = /* glsl */ `
     }
 
     // The stack: x and y the nearest layer's distance and slot, z the
-    // smoothed stack's distance.
+    // smoothed stack's distance. The first slot seeds only x and y:
+    // layersField() folds its distance into z at its own place in the
+    // slot order.
     vec2 plate = vec2(NO_SURFACE_METERS, MATERIAL_PLATE);
     vec3 stack = vec3(NO_SURFACE_METERS, 0.0, NO_SURFACE_METERS);
+    float first = NO_SURFACE_METERS;
     if (firstSlot < 0) {
       plate = plateField(q);
     } else {
-      float first = layerDistance(q, firstSlot);
-      stack = vec3(first, float(firstSlot), first);
+      first = layerDistance(q, firstSlot);
+      stack.xy = vec2(first, float(firstSlot));
     }
     stack = layersField(
       q,
       toppingSkirtBlend(),
       min(plate.x + toppingThicknessMeters, stack.x),
       firstSlot,
+      first,
       stack
     );
     vec2 cake = stack.xy;
@@ -208,17 +212,23 @@ export const createCakeUniforms = () => ({
   toppingTranslucency: { value: 0 },
 });
 
-/** #### Copies a resolved cake into the cake's uniforms, in place
+/** #### Copies a cake's values into the cake's uniforms, in place
  * - Writes into the arrays and Color objects the uniforms already hold, so
  *   it must be given the material's own `uniforms`: UniformsUtils.merge()
  *   cloned each Color when the material was made, and the object
  *   createCakeUniforms() returned is no longer read.
- * - Each colour is set by Color.set() from its sRGB `#rrggbb` string, which
- *   Three.js converts into its linear working colour space.
- * - Allocates nothing but what Color.set() spends parsing each string.
+ * - Each colour is set by Color.setRGB() from its sRGB channels, which
+ *   Three.js converts into its linear working colour space in place.
+ * - Clamps, since an underdamped spring can pass through 0: every length
+ *   at 0 and below, so a layer's bottom never sinks into the plate, the
+ *   coverage within 0 and 1, and each layer's rounding at the least of its
+ *   radii and half its height.
+ * - Allocates nothing, so it is safe on the per-frame path.
  * @param uniforms The material's uniforms, as createCakeUniforms() made
  *   them and UniformsUtils.merge() copied them.
- * @param values The resolved cake, as resolveRecipe() returns it.
+ * @param values The cake's values, as src/motion/cake-motion.js keeps
+ *   them: the resolved cake's shape, with each colour as sRGB channels
+ *   `r`, `g` and `b`, from 0 to 1.
  */
 export const writeCakeUniforms = (uniforms, values) => {
   const { bounds, layers, plate, topping } = values;
@@ -227,34 +237,51 @@ export const writeCakeUniforms = (uniforms, values) => {
 
   for (let slot = 0; slot < LAYER_SLOTS; slot++) {
     const layer = layers[slot];
-    uniforms.layerBottomRadiiMeters.value[slot] = layer.bottomRadiusMeters;
-    uniforms.layerBottomsMeters.value[slot] = layer.bottomMeters;
-    uniforms.layerColors.value[slot].set(layer.color);
-    uniforms.layerHeightsMeters.value[slot] = layer.heightMeters;
+    const bottomRadiusMeters = Math.max(layer.bottomRadiusMeters, 0);
+    const heightMeters = Math.max(layer.heightMeters, 0);
+    const topRadiusMeters = Math.max(layer.topRadiusMeters, 0);
+    const greatestRoundingMeters = Math.min(
+      bottomRadiusMeters,
+      topRadiusMeters,
+      0.5 * heightMeters,
+    );
+    uniforms.layerBottomRadiiMeters.value[slot] = bottomRadiusMeters;
+    uniforms.layerBottomsMeters.value[slot] = Math.max(layer.bottomMeters, 0);
+    setColor(uniforms.layerColors.value[slot], layer.color);
+    uniforms.layerHeightsMeters.value[slot] = heightMeters;
     uniforms.layerRoughnesses.value[slot] = layer.roughness;
-    uniforms.layerRoundingsMeters.value[slot] = layer.roundingMeters;
-    uniforms.layerTopRadiiMeters.value[slot] = layer.topRadiusMeters;
+    uniforms.layerRoundingsMeters.value[slot] = Math.min(
+      Math.max(layer.roundingMeters, 0),
+      greatestRoundingMeters,
+    );
+    uniforms.layerTopRadiiMeters.value[slot] = topRadiusMeters;
   }
 
-  uniforms.plateBaseRadiusMeters.value = plate.baseRadiusMeters;
-  uniforms.plateColor.value.set(plate.color);
-  uniforms.plateLipHeightMeters.value = plate.lipHeightMeters;
+  uniforms.plateBaseRadiusMeters.value = Math.max(plate.baseRadiusMeters, 0);
+  setColor(uniforms.plateColor.value, plate.color);
+  uniforms.plateLipHeightMeters.value = Math.max(plate.lipHeightMeters, 0);
   uniforms.plateMetalness.value = plate.metalness;
-  uniforms.plateRimRadiusMeters.value = plate.rimRadiusMeters;
+  uniforms.plateRimRadiusMeters.value = Math.max(plate.rimRadiusMeters, 0);
   uniforms.plateRoughness.value = plate.roughness;
-  uniforms.plateSweepHeightMeters.value = plate.sweepHeightMeters;
-  uniforms.plateThicknessMeters.value = plate.thicknessMeters;
+  uniforms.plateSweepHeightMeters.value = Math.max(
+    plate.sweepHeightMeters,
+    0,
+  );
+  uniforms.plateThicknessMeters.value = Math.max(plate.thicknessMeters, 0);
 
-  uniforms.toppingBaseMeters.value = topping.baseMeters;
-  uniforms.toppingColor.value.set(topping.color);
-  uniforms.toppingCoverage.value = topping.coverage;
-  uniforms.toppingDripMeters.value = topping.dripMeters;
+  uniforms.toppingBaseMeters.value = Math.max(topping.baseMeters, 0);
+  setColor(uniforms.toppingColor.value, topping.color);
+  uniforms.toppingCoverage.value = Math.min(Math.max(topping.coverage, 0), 1);
+  uniforms.toppingDripMeters.value = Math.max(topping.dripMeters, 0);
   uniforms.toppingDripWaves.value = topping.dripWaves;
-  uniforms.toppingPileMeters.value = topping.pileMeters;
-  uniforms.toppingRadiusMeters.value = topping.radiusMeters;
+  uniforms.toppingPileMeters.value = Math.max(topping.pileMeters, 0);
+  uniforms.toppingRadiusMeters.value = Math.max(topping.radiusMeters, 0);
   uniforms.toppingRoughness.value = topping.roughness;
-  uniforms.toppingRoundingMeters.value = topping.roundingMeters;
-  uniforms.toppingThicknessMeters.value = topping.thicknessMeters;
+  uniforms.toppingRoundingMeters.value = Math.max(topping.roundingMeters, 0);
+  uniforms.toppingThicknessMeters.value = Math.max(
+    topping.thicknessMeters,
+    0,
+  );
   uniforms.toppingTranslucency.value = topping.translucency;
 
   uniforms.plateBoundBottomMeters.value = bounds.plate.bottomMeters;
@@ -263,4 +290,9 @@ export const writeCakeUniforms = (uniforms, values) => {
   uniforms.stackBoundBottomMeters.value = bounds.stack.bottomMeters;
   uniforms.stackBoundRadiusMeters.value = bounds.stack.radiusMeters;
   uniforms.stackBoundTopMeters.value = bounds.stack.topMeters;
+};
+
+/** Sets a Color from sRGB channels, from 0 to 1, without allocating. */
+const setColor = (color, { r, g, b }) => {
+  color.setRGB(r, g, b, SRGBColorSpace);
 };
