@@ -61,7 +61,7 @@ import { createRaymarchQuad } from "./scene/quad.js";
 import { writeCakeUniforms } from "./sdf/cake.js";
 import { connectCakeArrows } from "./ui/cake-arrows.js";
 import { connectControlsToggle } from "./ui/controls-toggle.js";
-import { connectArrowKeys } from "./ui/keys.js";
+import { connectKeys } from "./ui/keys.js";
 import { connectSliders } from "./ui/sliders.js";
 
 const CAMERA_ELEVATION_RADIANS = MathUtils.degToRad(22); // above the table
@@ -74,6 +74,9 @@ const FIT_MARGIN = 1.15;
 const FULL_TURN_RADIANS = 2 * Math.PI;
 // The slow turn of the turntable while nothing holds it: a lap in 30 s.
 const IDLE_TURN_RADIANS_PER_SECOND = MathUtils.degToRad(12);
+// How long Space takes to ease the slow turn to a stop, or back up to
+// speed, in seconds.
+const TURNTABLE_EASE_SECONDS = 0.3;
 // The zoom's limits, as multiples of the fitted distance, unitless: near
 // enough to see the crumb, and far enough to see the cake small in the
 // view. First guesses, to tune by eye.
@@ -187,6 +190,10 @@ const viewReset = {
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
 let idleYawRadians = 0; // the slow turn's share of the cake's yaw
 let isHeld = false; // a press holds the cake, which pauses the slow turn
+let isTurntableOn = true; // Space stops and starts the slow turn
+// How far the slow turn is through its ease, 0 stopped to 1 at full speed,
+// linear in time.
+let turntableShare = 1;
 
 /** #### Sets both sliders' values and `max`es to the current cake's */
 const showSliders = () => {
@@ -348,10 +355,13 @@ const sliders = connectSliders(controls, {
   },
 });
 showSliders();
-connectArrowKeys({
+connectKeys({
   onDown: () => stepReveal(-1),
   onLeft: () => stepEaten(-1),
   onRight: () => stepEaten(1),
+  onSpace: () => {
+    isTurntableOn = !isTurntableOn;
+  },
   onUp: () => stepReveal(1),
 });
 connectCakeArrows(controls, {
@@ -398,9 +408,16 @@ timer.connect(document); // no jump after the tab is hidden and shown again
 renderer.setAnimationLoop((timestampMs) => {
   timer.update(timestampMs);
   const deltaSeconds = timer.getDelta();
+  const easeStep = deltaSeconds / TURNTABLE_EASE_SECONDS;
+  turntableShare = isTurntableOn
+    ? Math.min(turntableShare + easeStep, 1)
+    : Math.max(turntableShare - easeStep, 0);
   if (!reducedMotion.matches && !isHeld) {
-    // Turns the cake clockwise, seen from above.
-    const turnRadians = IDLE_TURN_RADIANS_PER_SECOND * deltaSeconds;
+    // Turns the cake clockwise, seen from above, at a speed eased in and
+    // out by smoothstep as Space stops and starts it.
+    const s = turntableShare;
+    const turnRadians =
+      IDLE_TURN_RADIANS_PER_SECOND * s * s * (3 - 2 * s) * deltaSeconds;
     idleYawRadians = (idleYawRadians - turnRadians) % FULL_TURN_RADIANS;
   }
   stepCakeMotion(motion, deltaSeconds);

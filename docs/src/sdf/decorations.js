@@ -16,12 +16,14 @@ import {
 import { DECORATION_SLOTS } from "../cake/slots.js";
 
 /** #### The GLSL chunk of the decorations' field
- * - Needs the primitives chunk, src/sdf/primitives.js, the topping's
- *   chunk, src/sdf/topping.js, and the `stackBoundTopMeters` uniform
- *   declared before it.
+ * - Needs the primitives chunk, src/sdf/primitives.js, with its hashes,
+ *   the topping's chunk, src/sdf/topping.js, and the `stackBoundTopMeters`
+ *   uniform declared before it.
  * - decorationsField() returns the distance in metres, negative inside an
  *   item, and its material id: a slot's, `MATERIAL_SLOT_FIRST` plus its
- *   index, 16 to 39, a sprinkle's 48 or a flake's 49.
+ *   index, 16 to 39, a sprinkle's 48 or a flake's 49. It leaves out the
+ *   slot it is given, so a ray refracted into a translucent item can
+ *   march to the part beneath.
  * - Each item stands on toppingSurfaceHeight() at its radius, less its
  *   embed, so it rides the topping as it moves, raised by its animated
  *   offset.
@@ -73,13 +75,14 @@ export const decorationsChunk = /* glsl */ `
 
   // The kinds' numbers, indexed by kind id, from src/cake/place.js; row 0
   // is no kind. Half heights and reaches, the radius of the bounding
-  // sphere, are in metres at scale 1; embeds and varies unitless; tilts in
-  // radians.
+  // sphere, are in metres at scale 1; embeds, translucencies and varies
+  // unitless; tilts in radians.
   ${kindArray("DECORATION_EMBEDS", (kind) => kind.embed)}
   ${kindArray("DECORATION_HALF_HEIGHTS_METERS", halfHeightOf)}
   ${kindArray("DECORATION_REACHES_METERS", boundingRadiusMeters)}
   ${kindArray("DECORATION_ROUGHNESSES", (kind) => kind.roughness)}
   ${kindArray("DECORATION_TILTS_RADIANS", (kind) => kind.tiltRadians)}
+  ${kindArray("DECORATION_TRANSLUCENCIES", (kind) => kind.translucency ?? 0)}
   ${kindArray("DECORATION_VARIES", (kind) => kind.vary)}
   // The sprinkles' colours, SPRINKLE_PALETTE in linear space.
   const vec3 SPRINKLE_COLORS[${SPRINKLE_PALETTE.length}] = vec3[](
@@ -91,25 +94,6 @@ export const decorationsChunk = /* glsl */ `
   float decorationKindDistance(int kind, vec3 p) {
     ${DECORATION_KINDS.map(kindDistanceLine).join("\n    ")}
     return NO_SURFACE_METERS;
-  }
-
-  // Chris Wellons's lowbias32 integer hash,
-  // https://nullprogram.com/blog/2018/07/31/, as src/cake/place.js uses.
-  uint lowbias32(uint x) {
-    x ^= x >> 16;
-    x *= 0x7feb352du;
-    x ^= x >> 15;
-    x *= 0x846ca68bu;
-    x ^= x >> 16;
-    return x;
-  }
-
-  // The next hash of a sequence, and a number from 0 up to 1 from a hash.
-  uint nextHash(uint hash) {
-    return lowbias32(hash + 0x9e3779b9u);
-  }
-  float unitOfHash(uint hash) {
-    return float(hash >> 8u) / 16777216.0;
   }
 
   // A 2D vector turned by an angle, in radians, anticlockwise.
@@ -192,8 +176,9 @@ export const decorationsChunk = /* glsl */ `
   // bounding cylinder, is no nearer than the nearest item so far, so the
   // field is that of every item evaluated. A slot's point is turned into
   // the item's frame by the transpose of its rotation, p * M in GLSL, and
-  // its scale, uniform, multiplies the distance back.
-  vec2 decorationsField(vec3 p) {
+  // its scale, uniform, multiplies the distance back. The slot hiddenSlot
+  // is left out; any number outside 0 to DECORATION_SLOTS - 1 hides none.
+  vec2 decorationsField(vec3 p, int hiddenSlot) {
     float slab = max(
       toppingBaseMeters - DECORATION_SLAB_BELOW_METERS - p.y,
       p.y - stackBoundTopMeters
@@ -206,7 +191,7 @@ export const decorationsChunk = /* glsl */ `
     for (int i = 0; i < DECORATION_SLOTS; i++) {
       if (i >= decorationCount) break;
       float scale = decorationScales[i];
-      if (scale <= 0.0) continue;
+      if (scale <= 0.0 || i == hiddenSlot) continue;
       int kind = int(decorationKinds[i] + 0.5);
       vec3 offset = decorationOffsets[i];
       float reach = DECORATION_REACHES_METERS[kind] * scale;
@@ -304,13 +289,13 @@ function kindDistanceLine(kind) {
 }
 
 /** Gives an sRGB `#rrggbb` colour as a GLSL vec3 in linear space. */
-function linearColorOf(hex) {
+export function linearColorOf(hex) {
   const color = new Color().setStyle(hex, SRGBColorSpace);
   return `vec3(${[color.r, color.g, color.b].map(toGlslFloat).join(", ")})`;
 }
 
 /** Writes a number as a GLSL float literal, with a decimal point. */
-function toGlslFloat(value) {
+export function toGlslFloat(value) {
   const text = String(Number(value.toPrecision(6)));
   return text.includes(".") || text.includes("e") ? text : `${text}.0`;
 }

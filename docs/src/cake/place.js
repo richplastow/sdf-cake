@@ -6,7 +6,14 @@
  * nothing here imports from `three`, so Node can run it.
  */
 
+// A cherry's translucency, 0 opaque to 1 clear, on the scale of the jam's
+// JAM_TRANSLUCENCY in src/cake/materials.js: a glacé cherry, mostly sugar
+// syrup, letting a little light through. A tuning value, not measured.
+const CHERRY_TRANSLUCENCY = 0.15;
 const FULL_TURN_RADIANS = 2 * Math.PI;
+// A dried orange slice's translucency, on the same scale: a candied slice
+// lets a little light through, as the cherry does. A tuning value.
+const ORANGE_SLICE_TRANSLUCENCY = 0.15;
 // The colour of a scattered kind a cake lacks, or one whose colours come
 // from SPRINKLE_PALETTE: black, as an sRGB `#rrggbb` string.
 const NO_SCATTER_COLOR = "#000000";
@@ -26,6 +33,9 @@ const TOP_INSET_FRACTION = 0.8;
  *   sits below the surface as a fraction of its height, all unitless but
  *   the tilt. A scattered kind is drawn by the field's repeated cell, never
  *   placed in a slot.
+ * - `translucency`, 0 opaque to 1 clear, lets a slot's item show the
+ *   topping or sponge beneath it, as the jam does; a kind that leaves it
+ *   out is opaque, 0. Only a slot's kind reads it, never a scattered one.
  */
 export const DECORATION_KINDS = [
   {
@@ -37,6 +47,7 @@ export const DECORATION_KINDS = [
     roughness: 0.2,
     sizeMeters: [0.018, 0.018, 0.018],
     tiltRadians: 0,
+    translucency: CHERRY_TRANSLUCENCY,
     vary: 0.1,
   },
   {
@@ -59,6 +70,7 @@ export const DECORATION_KINDS = [
     roughness: 0.5,
     sizeMeters: [0.04, 0.004, 0.04],
     tiltRadians: degreesToRadians(8),
+    translucency: ORANGE_SLICE_TRANSLUCENCY,
     vary: 0.1,
   },
   {

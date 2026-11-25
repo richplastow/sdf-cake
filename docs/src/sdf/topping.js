@@ -1,7 +1,7 @@
 /** #### The GLSL chunk of the topping's field
- * - Needs the primitives chunk, src/sdf/primitives.js, pasted before it,
- *   and the stack's distances, sharp and smoothed, from the layers' chunk,
- *   which the caller passes in.
+ * - Needs the primitives chunk, src/sdf/primitives.js, and the layers'
+ *   chunk, src/sdf/layers.js, pasted before it, and the smoothed stack's
+ *   distance, from layersField(), which the caller passes in.
  * - toppingSkirtBlend() gives the blend, in metres, the caller's layer
  *   walk smooths the stack with.
  * - One coverage, 0 to 1, places the topping: below `COVERAGE_TOP` a
@@ -14,9 +14,11 @@
  *   the skirt starts, and the coat runs thick over the channels between
  *   layers, leaving a slight dip. A pile, a smooth bump whose slope falls
  *   to 0 at its rim, rises from the cap's top.
- * - The topping is a shell: the sharp stack is subtracted from it, so the
- *   slice's cut shows the layers inside the coat, and the coat thick in
- *   each channel.
+ * - The topping is a shell: copies of the layers without their holes or
+ *   irregularity, drawn in a little and overlapping at their seams, are
+ *   subtracted from it, so the slice's cut shows the layers inside the
+ *   coat, the coat thick in each channel, and the topping only a little
+ *   way into the outermost and topmost holes, never filling every one.
  * - toppingField() returns the distance in metres, negative inside the
  *   topping, and its material id, `MATERIAL_TOPPING`.
  * - toppingSurfaceHeight() returns the height of the topping's top at a
@@ -36,6 +38,19 @@ export const toppingChunk = /* glsl */ `
   uniform float toppingThicknessMeters;
   uniform float toppingTranslucency;
 
+  // How far below the stack's top the carving copies stop, in metres, so
+  // the topping sinks a little into the topmost layer's holes.
+  const float CARVE_DIP_METERS = 0.0015;
+  // The topping's distance beyond which the carve is not read, in metres:
+  // the carve only raises the distance, so the uncarved one is a lower
+  // bound there, and lies too far from the surface to stop the march.
+  const float CARVE_GATE_METERS = 0.001;
+  // How far the carving copies' radii are drawn in, in metres, so the
+  // topping fills the outermost holes a little.
+  const float CARVE_INSET_METERS = 0.0015;
+  // How far each carving copy reaches below its layer's bottom, in metres,
+  // so it overlaps the copy beneath and no topping shows at the seam.
+  const float CARVE_SEAM_METERS = 0.002;
   // The coverage at which the cap is full and the skirt starts, unitless.
   const float COVERAGE_TOP = 0.5;
   // The drips' phase round the cake, in radians, so no drip lines up with
@@ -120,10 +135,40 @@ export const toppingChunk = /* glsl */ `
     );
   }
 
+  // The distance to the solid the topping is carved by, in metres,
+  // negative inside it: each used layer's rounded cone, without its holes
+  // or irregularity, its radii drawn in by CARVE_INSET_METERS and its
+  // bottom lowered by CARVE_SEAM_METERS, all cut off CARVE_DIP_METERS below
+  // the topping's base. A union of exact distances cut by a half-space,
+  // iq's opUnion and opIntersection,
+  // https://iquilezles.org/articles/distfunctions/, so a bound.
+  float toppingCarveDistance(vec2 q) {
+    float carve = NO_SURFACE_METERS;
+    for (int slot = 0; slot < LAYER_SLOTS; slot++) {
+      float height = layerHeightsMeters[slot];
+      if (height <= 0.0) continue;
+      float halfHeight = 0.5 * (height + CARVE_SEAM_METERS);
+      float bottomRadius =
+        max(layerBottomRadiiMeters[slot] - CARVE_INSET_METERS, 0.0);
+      float topRadius =
+        max(layerTopRadiiMeters[slot] - CARVE_INSET_METERS, 0.0);
+      float center = layerBottomsMeters[slot] - CARVE_SEAM_METERS +
+        halfHeight;
+      carve = min(carve, roundedCappedConeDistance(
+        q - vec2(0.0, center),
+        bottomRadius,
+        halfHeight,
+        min(layerRoundingsMeters[slot], min(bottomRadius, topRadius)),
+        topRadius
+      ));
+    }
+    return max(carve, q.y - (toppingBaseMeters - CARVE_DIP_METERS));
+  }
+
   // The field of the topping: x is the distance in metres, negative inside
   // it, and y its material id. It takes the point, p, the point in the
-  // plane of revolution, q, and the uncut stack's distances, in metres:
-  // smoothed, with the layers joined by toppingSkirtBlend(), and sharp.
+  // plane of revolution, q, and the uncut stack's smoothed distance, in
+  // metres, the layers joined by toppingSkirtBlend().
   //
   // The skirt is the smoothed stack offset outwards by the thickness, iq's
   // opRound, cut off below a height by iq's opIntersection with a
@@ -131,9 +176,10 @@ export const toppingChunk = /* glsl */ `
   // The cap is the same offset above the topping's base, limited to a
   // rounded cylinder of the cap's radius. The pile is a height field over
   // the cap's top, toppingPileRise(), held to the pile's cylinder and
-  // standing on the base, unioned with the cap. The sharp stack is
-  // subtracted last.
-  vec2 toppingField(vec3 p, vec2 q, float smoothStack, float stack) {
+  // standing on the base, unioned with the cap. The cap's floor lies
+  // CARVE_DIP_METERS below the base, so it reaches into the top layer's
+  // holes. toppingCarveDistance() is subtracted last.
+  vec2 toppingField(vec3 p, vec2 q, float smoothStack) {
     if (toppingCoverage <= 0.0) {
       return vec2(NO_SURFACE_METERS, MATERIAL_TOPPING);
     }
@@ -151,7 +197,7 @@ export const toppingChunk = /* glsl */ `
       capRounding
     );
     float solid = max(
-      max(offset, toppingBaseMeters - q.y),
+      max(offset, toppingBaseMeters - CARVE_DIP_METERS - q.y),
       cylinder
     );
 
@@ -192,7 +238,11 @@ export const toppingChunk = /* glsl */ `
       solid = min(solid, max(offset, term));
     }
 
-    return vec2(subtractDistance(stack, solid), MATERIAL_TOPPING);
+    if (solid > CARVE_GATE_METERS) return vec2(solid, MATERIAL_TOPPING);
+    return vec2(
+      subtractDistance(toppingCarveDistance(q), solid),
+      MATERIAL_TOPPING
+    );
   }
 
   // The height of the topping's top at a radius from the axis, in metres:

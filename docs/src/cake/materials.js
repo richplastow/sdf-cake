@@ -1,8 +1,14 @@
+// The jam's translucency, unitless: half the light from the part beneath
+// shows through it.
+const JAM_TRANSLUCENCY = 0.5;
+
 // The palette every recipe names its materials from, first guesses to tune
 // by eye. Each entry gives a colour as an sRGB `#rrggbb` string, a
 // roughness as Three.js's physical shading takes it, 0 to 1, a metalness,
 // 0 for all but metals, and the crumb's hole strength, 0 to 1, and hole
-// cell in metres, which src/sdf/crumb.js will read.
+// cell in metres, which src/sdf/crumb.js reads. A layer's material may give
+// a `translucency`, 0 to 1, which lets the part beneath show through it as
+// a translucent topping's does; it defaults to 0, opaque.
 export const MATERIALS = {
   sponge: {
     color: "#e9c46a",
@@ -31,6 +37,7 @@ export const MATERIALS = {
     metalness: 0,
     holeStrength: 0,
     holeCellMeters: 0,
+    translucency: JAM_TRANSLUCENCY,
   },
   cream: {
     color: "#fff4e0",

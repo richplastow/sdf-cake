@@ -8,6 +8,7 @@
 
 import { Color, SRGBColorSpace } from "three";
 import { DECORATION_SLOTS, LAYER_SLOTS } from "../cake/slots.js";
+import { crumbChunk } from "./crumb.js";
 import { decorationsChunk } from "./decorations.js";
 import { layersChunk } from "./layers.js";
 import { plateChunk } from "./plate.js";
@@ -16,21 +17,24 @@ import { toppingChunk } from "./topping.js";
 /** #### The GLSL chunk of the cake's field
  * - Needs the primitives chunk, src/sdf/primitives.js, and Three.js's
  *   `common` chunk, for `PI` and `PI_HALF`, pasted before it. It pastes the
- *   plate's, the layers', the topping's and the decorations' chunks
- *   itself.
+ *   crumb's, the plate's, the layers', the topping's and the decorations'
+ *   chunks itself.
  * - Reads the uniforms createCakeUniforms() declares, so a change to any
  *   of them reshapes or recolours the cake with no new shader.
  * - cakeField() returns the distance in metres, negative inside the cake,
  *   and the id of the material at the nearest surface: a layer's slot, 0
  *   to 6, the plate's 7, the topping's 8 or a decoration's, 16 and up,
  *   which the other functions map to the surface's albedo, roughness and
- *   metalness.
- * - cakeFieldOf() returns the same with or without the topping, so a ray
- *   refracted into a translucent topping can march to the part beneath;
- *   the decorations are in both, so one embedded in a translucent topping
- *   shows through it.
+ *   metalness. A layer's albedo and roughness are an inclusion's, ids 50
+ *   to 52, where the point hit lies in one.
+ * - cakeFieldOf() returns the same with the topping, a translucent
+ *   layer or a translucent decoration hidden, as `HIDE_*` and a slot name
+ *   them, so a ray refracted into a translucent part can march to the
+ *   part beneath; the other decorations are always drawn, so one embedded
+ *   in a translucent topping shows through it.
  */
 export const cakeChunk = /* glsl */ `
+  ${crumbChunk}
   ${plateChunk}
   ${layersChunk}
   ${toppingChunk}
@@ -49,14 +53,40 @@ export const cakeChunk = /* glsl */ `
   ${decorationsChunk}
 
   const float DECORATION_METALNESS = 0.0; // no decoration is a metal
+  // What cakeFieldOf() hides: nothing, or the topping alone. A slot, 0 to
+  // LAYER_SLOTS - 1, hides that layer and the topping. HIDE_DECORATION_FIRST
+  // plus a decoration's slot hides that decoration alone.
+  const int HIDE_NONE = -1;
+  const int HIDE_TOPPING = LAYER_SLOTS;
+  const int HIDE_DECORATION_FIRST = LAYER_SLOTS + 1;
+  // How far inside its plain layer a point must lie to show an inclusion,
+  // in metres, as a distance: deeper than the layer's own surface, so only
+  // a cut face shows them, never the outer surface.
+  const float INCLUSION_INSET_METERS = -0.001;
   const float LAYER_METALNESS = 0.0; // no layer is a metal
   const float TOPPING_METALNESS = 0.0; // no topping is a metal
 
-  // The albedo of a material id at the point hit, which a sprinkle's
-  // colour needs.
+  // The material id of the inclusion at a point of the slot's layer, or
+  // 0.0 for none: inclusionAt()'s, where the layer has inclusions and the
+  // point lies deeper than INCLUSION_INSET_METERS inside its plain layer.
+  float layerInclusionAt(vec3 point, int slot) {
+    float cellMeters = layerCrumbs[slot].z;
+    if (cellMeters <= 0.0) return 0.0;
+    vec2 q = vec2(length(point.xz), point.y);
+    if (layerPlainDistance(point, q, slot) >= INCLUSION_INSET_METERS) {
+      return 0.0;
+    }
+    return inclusionAt(point, cellMeters, layerInclusionWeights[slot]);
+  }
+
+  // The albedo of a material id at the point hit, which an inclusion's
+  // and a sprinkle's colour need.
   vec3 cakeAlbedoOf(float materialId, vec3 point) {
     if (materialId < MATERIAL_PLATE - 0.5) {
-      return layerColors[int(materialId + 0.5)];
+      int slot = int(materialId + 0.5);
+      float inclusion = layerInclusionAt(point, slot);
+      if (inclusion > 0.0) return inclusionAlbedoOf(inclusion);
+      return layerColors[slot];
     }
     if (materialId < MATERIAL_TOPPING - 0.5) return plateColor;
     if (materialId < MATERIAL_TOPPING + 0.5) return toppingColor;
@@ -107,9 +137,10 @@ export const cakeChunk = /* glsl */ `
   // that the plate stays the nearer part whatever the coat does. Then the
   // topping and the decorations are unioned with the stack before the cut,
   // so the cut passes through all three and the plate's gate reads them.
-  // Without the topping, the cut stack, the decorations and the plate, as
-  // a translucent topping covers them.
-  vec2 cakeFieldOf(vec3 p, bool withTopping) {
+  // With the topping or a layer hidden, the topping is left out, and a
+  // hidden slot is left out of the stack too, as a translucent part covers
+  // what is left. A hidden decoration is left out alone.
+  vec2 cakeFieldOf(vec3 p, int hidden) {
     vec2 q = vec2(length(p.xz), p.y);
 
     // The part whose bound is least: a layer's slot, or -1 for the plate.
@@ -117,7 +148,7 @@ export const cakeChunk = /* glsl */ `
     float leastBound = plateBound;
     int firstSlot = -1;
     for (int slot = 0; slot < LAYER_SLOTS; slot++) {
-      if (layerHeightsMeters[slot] <= 0.0) continue;
+      if (layerHeightsMeters[slot] <= 0.0 || slot == hidden) continue;
       float bound = layerBoundDistance(q, slot);
       if (bound < leastBound) {
         leastBound = bound;
@@ -135,33 +166,35 @@ export const cakeChunk = /* glsl */ `
     if (firstSlot < 0) {
       plate = plateField(q);
     } else {
-      first = layerDistance(q, firstSlot);
+      first = layerDistance(p, q, firstSlot);
       stack.xy = vec2(first, float(firstSlot));
     }
     stack = layersField(
+      p,
       q,
       toppingSkirtBlend(),
       min(plate.x + toppingThicknessMeters, stack.x),
       firstSlot,
       first,
+      hidden,
       stack
     );
     vec2 cake = stack.xy;
-    if (withTopping) {
-      vec2 topping = toppingField(p, q, stack.z, stack.x);
+    if (hidden == HIDE_NONE || hidden >= HIDE_DECORATION_FIRST) {
+      vec2 topping = toppingField(p, q, stack.z);
       if (topping.x < cake.x) cake = topping;
     }
-    vec2 decorations = decorationsField(p);
+    vec2 decorations = decorationsField(p, hidden - HIDE_DECORATION_FIRST);
     if (decorations.x < cake.x) cake = decorations;
     cake.x = eatenStackDistance(p, cake.x);
     if (firstSlot >= 0 && plateBound < cake.x) plate = plateField(q);
     return plate.x < cake.x ? plate : cake;
   }
 
-  // The field at p with the topping: cakeFieldOf()'s, as every march but
-  // the one beneath a translucent topping reads it.
+  // The field at p with nothing hidden: cakeFieldOf()'s, as every march
+  // but the one beneath a translucent part reads it.
   vec2 cakeField(vec3 p) {
-    return cakeFieldOf(p, true);
+    return cakeFieldOf(p, HIDE_NONE);
   }
 
   // A layer, the topping and a decoration are never metals; the plate may
@@ -173,9 +206,14 @@ export const cakeChunk = /* glsl */ `
     return DECORATION_METALNESS;
   }
 
-  float cakeRoughnessOf(float materialId) {
+  // The roughness of a material id at the point hit, which an
+  // inclusion's needs.
+  float cakeRoughnessOf(float materialId, vec3 point) {
     if (materialId < MATERIAL_PLATE - 0.5) {
-      return layerRoughnesses[int(materialId + 0.5)];
+      int slot = int(materialId + 0.5);
+      float inclusion = layerInclusionAt(point, slot);
+      if (inclusion > 0.0) return inclusionRoughnessOf(inclusion);
+      return layerRoughnesses[slot];
     }
     if (materialId < MATERIAL_TOPPING - 0.5) return plateRoughness;
     if (materialId < MATERIAL_TOPPING + 0.5) return toppingRoughness;
@@ -212,10 +250,16 @@ export const createCakeUniforms = () => ({
   layerColors: {
     value: Array.from({ length: LAYER_SLOTS }, () => new Color()),
   },
+  // Four numbers a slot: its hole strength, its hole cell, its inclusion
+  // cell and its irregularity, the last three in metres.
+  layerCrumbs: { value: new Float32Array(4 * LAYER_SLOTS) },
   layerHeightsMeters: { value: new Float32Array(LAYER_SLOTS) },
+  // Three numbers a slot: its shares of chips, nuts and raisins.
+  layerInclusionWeights: { value: new Float32Array(3 * LAYER_SLOTS) },
   layerRoughnesses: { value: new Float32Array(LAYER_SLOTS) },
   layerRoundingsMeters: { value: new Float32Array(LAYER_SLOTS) },
   layerTopRadiiMeters: { value: new Float32Array(LAYER_SLOTS) },
+  layerTranslucencies: { value: new Float32Array(LAYER_SLOTS) },
   plateBaseRadiusMeters: { value: 0 },
   plateBoundBottomMeters: { value: 0 },
   plateBoundRadiusMeters: { value: 0 },
@@ -261,8 +305,9 @@ export const createCakeUniforms = () => ({
  *   falling item; the camera's fit reads `values.bounds`, without it.
  * - Clamps, since an underdamped spring can pass through 0: every length
  *   at 0 and below, so a layer's bottom never sinks into the plate, the
- *   coverage within 0 and 1, and each layer's rounding at the least of its
- *   radii and half its height.
+ *   coverage within 0 and 1, each layer's hole strength and translucency
+ *   within 0 and 1, and each layer's rounding at the least of its radii
+ *   and half its height.
  * - Allocates nothing, so it is safe on the per-frame path.
  * @param uniforms The material's uniforms, as createCakeUniforms() made
  *   them and UniformsUtils.merge() copied them.
@@ -275,6 +320,8 @@ export const writeCakeUniforms = (uniforms, values) => {
 
   uniforms.eatenAngleRadians.value = values.eatenAngleRadians;
 
+  const crumbs = uniforms.layerCrumbs.value;
+  const weights = uniforms.layerInclusionWeights.value;
   for (let slot = 0; slot < LAYER_SLOTS; slot++) {
     const layer = layers[slot];
     const bottomRadiusMeters = Math.max(layer.bottomRadiusMeters, 0);
@@ -288,13 +335,24 @@ export const writeCakeUniforms = (uniforms, values) => {
     uniforms.layerBottomRadiiMeters.value[slot] = bottomRadiusMeters;
     uniforms.layerBottomsMeters.value[slot] = Math.max(layer.bottomMeters, 0);
     setColor(uniforms.layerColors.value[slot], layer.color);
+    crumbs[4 * slot] = Math.min(Math.max(layer.holeStrength, 0), 1);
+    crumbs[4 * slot + 1] = Math.max(layer.holeCellMeters, 0);
+    crumbs[4 * slot + 2] = Math.max(layer.inclusionCellMeters, 0);
+    crumbs[4 * slot + 3] = Math.max(layer.irregularityMeters, 0);
     uniforms.layerHeightsMeters.value[slot] = heightMeters;
+    for (let index = 0; index < 3; index++) {
+      weights[3 * slot + index] = layer.inclusionWeights[index];
+    }
     uniforms.layerRoughnesses.value[slot] = layer.roughness;
     uniforms.layerRoundingsMeters.value[slot] = Math.min(
       Math.max(layer.roundingMeters, 0),
       greatestRoundingMeters,
     );
     uniforms.layerTopRadiiMeters.value[slot] = topRadiusMeters;
+    uniforms.layerTranslucencies.value[slot] = Math.min(
+      Math.max(layer.translucency, 0),
+      1,
+    );
   }
 
   uniforms.plateBaseRadiusMeters.value = Math.max(plate.baseRadiusMeters, 0);

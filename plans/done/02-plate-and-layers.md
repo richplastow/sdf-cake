@@ -97,7 +97,7 @@ type: plan
    keyed by material name, each entry holding every column below, with
    the hole cell in metres. Roughness as Three.js's physical shading
    takes it, metalness 0 unless given; the crumb columns are read by
-   [Plan 08](../todo/08-crumb.md):
+   [Plan 08](./08-crumb.md):
 
    ```json
    {
@@ -147,7 +147,7 @@ type: plan
    Roundings not given are 2 mm for a seam of jam or ganache and 4 mm
    for every other layer, biscuit, pastry and custard included; the
    `irregularityMeters` and `inclusions` of each layer are listed in
-   [Plan 08](../todo/08-crumb.md#decisions). The fruit cake has no plate so the
+   [Plan 08](./08-crumb.md#decisions). The fruit cake has no plate so the
    plate's shrink to nothing is exercised; the cheesecake's 200 steps and
    the fruit cake's single step exercise the slider's extremes in
    [Plan 07](./07-sliders.md).
@@ -318,7 +318,7 @@ cheesecake), its `decorations` from
 [Plan 06's Decision 3](./06-decorations.md#decisions) (`[]` for the
 Victoria sponge and the cheesecake), and each layer's
 `irregularityMeters` and `inclusions` from
-[Plan 08's Decision 5](../todo/08-crumb.md#decisions). The fruit cake, with no
+[Plan 08's Decision 5](./08-crumb.md#decisions). The fruit cake, with no
 plate and one layer, is valid under Decision 6 only through its topping
 and decorations.
 

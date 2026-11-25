@@ -594,7 +594,7 @@ accepted and the next rejected.
    inputs, the stepped eaten angle, the reveal of the parts, the four
    keys and Escape. Visible proof: the cake eaten step by step and taken
    apart stop by stop.
-7. [Plan 08, The crumb](08-crumb.md): sponge holes, inclusions and
+7. [Plan 08, The crumb](../done/08-crumb.md): sponge holes, inclusions and
    irregularity. Visible proof: a pitted cut face with raisins and chips
    in it, and a lumpy top.
 8. Then Sandbox Mode or Gameplay Mode, after research of their own.

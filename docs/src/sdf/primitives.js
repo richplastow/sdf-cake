@@ -20,6 +20,7 @@
  *   each divisor is held at `MIN_DIVISOR_METERS_SQUARED` or more, so the
  *   distance stays exact to the point or disc the shape becomes, never
  *   NaN.
+ * - Ends with the integer hash the crumb and the decorations share.
  */
 export const primitivesChunk = /* glsl */ `
   // The least a squared length may be as a divisor, in square metres: a
@@ -123,6 +124,16 @@ export const primitivesChunk = /* glsl */ `
     return min(a, b) - 0.25 * blend * h * h;
   }
 
+  // The intersection of two distances, a and b, with the edge where they
+  // meet rounded off over the blend, in metres: iq's quadratic polynomial
+  // smooth maximum, the smooth minimum of the two negated, negated,
+  // https://iquilezles.org/articles/smin/. It reads up to a quarter of the
+  // blend more than max(), never less, and is a bound for the same reason
+  // the smooth minimum is. The blend must be above 0.
+  float smoothMaxDistance(float a, float b, float blend) {
+    return -smoothMinDistance(-a, -b, blend);
+  }
+
   // The distance to a segment between two points in 2D: iq's sdSegment,
   // exact, with its divisor guarded.
   float segmentDistance(vec2 p, vec2 a, vec2 b) {
@@ -168,5 +179,24 @@ export const primitivesChunk = /* glsl */ `
     vec2 c = vec2(sin(halfAngle), cos(halfAngle));
     float m = length(q - c * max(dot(q, c), 0.0));
     return m * sign(c.y * q.x - c.x * q.y);
+  }
+
+  // Chris Wellons's lowbias32 integer hash,
+  // https://nullprogram.com/blog/2018/07/31/, as src/cake/place.js uses.
+  uint lowbias32(uint x) {
+    x ^= x >> 16;
+    x *= 0x7feb352du;
+    x ^= x >> 15;
+    x *= 0x846ca68bu;
+    x ^= x >> 16;
+    return x;
+  }
+
+  // The next hash of a sequence, and a number from 0 up to 1 from a hash.
+  uint nextHash(uint hash) {
+    return lowbias32(hash + 0x9e3779b9u);
+  }
+  float unitOfHash(uint hash) {
+    return float(hash >> 8u) / 16777216.0;
   }
 `;

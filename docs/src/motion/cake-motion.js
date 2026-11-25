@@ -62,15 +62,20 @@ const SLICE_SECONDS = 0.6;
 const SLOT_STAGGER_SECONDS = 0.03;
 
 // The sprung numbers of each part, as the resolver names them: lengths on
-// the length spring, and surface numbers on the colour spring.
+// the length spring, and surface numbers on the colour spring. A layer's
+// inclusion weights, an array, are not sprung: retargetParts() copies
+// them in.
 const COLOR_CHANNELS = ["r", "g", "b"];
 const LAYER_LENGTH_KEYS = [
   "bottomRadiusMeters",
   "heightMeters",
+  "holeCellMeters",
+  "inclusionCellMeters",
+  "irregularityMeters",
   "roundingMeters",
   "topRadiusMeters",
 ];
-const LAYER_SURFACE_KEYS = ["roughness"];
+const LAYER_SURFACE_KEYS = ["holeStrength", "roughness", "translucency"];
 const PLATE_LENGTH_KEYS = [
   "baseRadiusMeters",
   "lipHeightMeters",
@@ -126,7 +131,10 @@ export const createCakeMotion = (cake) => {
   const values = {
     decorations,
     eatenAngleRadians: cake.eatenAngleRadians,
-    layers: cake.layers.map(copyPart),
+    layers: cake.layers.map((layer) => ({
+      ...copyPart(layer),
+      inclusionWeights: [...layer.inclusionWeights],
+    })),
     plate: copyPart(cake.plate),
     topping: copyPart(cake.topping),
     bounds: {
@@ -317,6 +325,14 @@ const retargetParts = (motion, cake) => {
       target.heightMeters > 0,
       part.lengths.heightMeters.value < SETTLE_METERS,
     );
+    // The weights only pick each inclusion's kind, so they switch at once,
+    // and a vanishing layer keeps its own, as it keeps its colour.
+    if (target.heightMeters > 0) {
+      const weights = part.values.inclusionWeights;
+      for (let index = 0; index < weights.length; index++) {
+        weights[index] = target.inclusionWeights[index];
+      }
+    }
   }
   retargetPart(
     motion.plate,
@@ -650,9 +666,9 @@ const placeItemState = (item, kind, delaySeconds, isAtRest, restScale) => {
 
 /** #### Retargets one part's springs on a resolved part
  * - Its lengths always take the new targets.
- * - Its colour and surface numbers keep their targets when the part is
- *   vanishing, jump to the new ones when it is appearing from nothing, and
- *   take the new targets otherwise.
+ * - Its colour and surface numbers, a layer's hole strength among them,
+ *   keep their targets when the part is vanishing, jump to the new ones
+ *   when it is appearing from nothing, and take the new targets otherwise.
  */
 const retargetPart = (part, resolved, isPresent, isAppearing) => {
   for (const key of part.lengthKeys) part.lengths[key].target = resolved[key];

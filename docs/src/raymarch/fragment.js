@@ -21,10 +21,10 @@ import { primitivesChunk } from "../sdf/primitives.js";
  *   RE_IndirectDiffuse() that MeshStandardMaterial uses.
  * - Where a ray misses the cake the fragment is discarded, so the page
  *   shows through the transparent canvas.
- * - A ray that hits a translucent topping is refracted into it and
- *   marched a short way, without the topping, to the part beneath, which
- *   is shaded as any hit, absorbed by Beer–Lambert over the path through
- *   the topping, and weighted by Schlick's Fresnel term.
+ * - A ray that hits a translucent topping or layer, such as the jam, is
+ *   refracted into it and marched a short way, without it, to the part
+ *   beneath, which is shaded as any hit, absorbed by Beer–Lambert over the
+ *   path through the part, and weighted by Schlick's Fresnel term.
  */
 export const raymarchFragmentShader = /* glsl */ `
   #include <common>
@@ -55,6 +55,12 @@ export const raymarchFragmentShader = /* glsl */ `
   // also a compile risk that only the browser settles: a driver may take
   // longer to compile it, or refuse it.
   const int MAX_MARCH_STEPS = 1024;
+  // The share of the field's distance the march steps while any layer is
+  // irregular, unitless: the displacement raises the field's gradient to
+  // about 1.03 at 1 mm and 1.08 at the cap of 2 mm, so stepping 0.9 of the
+  // distance never crosses the surface. It sits here, not on the layer's
+  // term, since a scaled layer would also thin the topping's coat.
+  const float IRREGULARITY_STEP_FACTOR = 0.9;
   const float SURFACE_EPSILON_METERS = 0.0001;
   // The offset either side of a hit point over which the normal is read.
   const float NORMAL_EPSILON_METERS = 0.0005;
@@ -91,9 +97,10 @@ export const raymarchFragmentShader = /* glsl */ `
   // A dielectric's specular colour at normal incidence, 4% of the light,
   // as lights_physical_fragment sets it without an IOR.
   const vec3 DIELECTRIC_SPECULAR_COLOR = vec3(0.04);
-  // A translucent topping's index of refraction, unitless: a tuning value
-  // for a fruit glaze, mostly water and sugar, between water's 1.333 and a
-  // thick sugar syrup's, about 1.45. Not measured.
+  // A translucent topping's or layer's index of refraction, unitless: a
+  // tuning value for a fruit glaze or a jam, mostly water and sugar,
+  // between water's 1.333 and a thick sugar syrup's, about 1.45. Not
+  // measured.
   const float GLAZE_IOR = 1.35;
   // Its reflectance at normal incidence, unitless, from the IOR against
   // air: ((n - 1) / (n + 1))^2, about 0.022, Schlick's F0,
@@ -101,16 +108,17 @@ export const raymarchFragmentShader = /* glsl */ `
   const float GLAZE_F0 =
     ((GLAZE_IOR - 1.0) / (GLAZE_IOR + 1.0)) *
     ((GLAZE_IOR - 1.0) / (GLAZE_IOR + 1.0));
-  // The march from a translucent topping's surface to the part beneath it:
-  // its most steps, and how far it goes, as a multiple of the topping's
-  // thickness plus its pile, unitless. A refracted ray leaves the surface
-  // no more than 48 degrees from the inward normal, so it meets the part
-  // beneath well within this, in a few steps; one that does not is shaded
-  // opaque.
+  // The march from a translucent part's surface to the part beneath it:
+  // its most steps, and how far it goes, as a multiple of its reach, a
+  // topping's thickness plus its pile or a layer's height, unitless. A
+  // refracted ray leaves the surface no more than 48 degrees from the
+  // inward normal, so it meets the part beneath well within this, in a few
+  // steps; one that does not is shaded opaque.
   const int GLAZE_MARCH_STEPS = 32;
   const float GLAZE_MAX_DISTANCE_PER_THICKNESS = 4.0;
-  // The least of the topping colour's channels taken as its transmittance
-  // through one thickness, unitless, so its logarithm stays finite.
+  // The least of a translucent part colour's channels taken as its
+  // transmittance through one thickness, unitless, so its logarithm stays
+  // finite.
   const float GLAZE_MIN_TRANSMITTANCE = 0.001;
 
   ${primitivesChunk}
@@ -207,9 +215,9 @@ export const raymarchFragmentShader = /* glsl */ `
   // https://iquilezles.org/articles/rmshadows/. It ends where its ray
   // leaves the bound grown by SHADOW_BOUND_MARGIN_METERS, past which
   // nothing can lower the share, or at SHADOW_MAX_DISTANCE_METERS. The
-  // part beneath a translucent topping is shadowed without the topping,
-  // which would otherwise hide it from every light.
-  float lightShareAt(vec3 p, vec3 directionToLight, bool withTopping) {
+  // part beneath a translucent part is shadowed with what cakeFieldOf()
+  // hides left out, as that part would otherwise hide it from every light.
+  float lightShareAt(vec3 p, vec3 directionToLight, int hidden) {
     float endMeters = min(
       boundSpan(directionToLight, SHADOW_BOUND_MARGIN_METERS, p).y,
       SHADOW_MAX_DISTANCE_METERS
@@ -217,7 +225,7 @@ export const raymarchFragmentShader = /* glsl */ `
     float share = 1.0;
     float t = SHADOW_START_METERS;
     for (int i = 0; i < MAX_SHADOW_STEPS; i++) {
-      float d = cakeFieldOf(p + directionToLight * t, withTopping).x;
+      float d = cakeFieldOf(p + directionToLight * t, hidden).x;
       if (d < SURFACE_EPSILON_METERS) return 0.0;
       share = min(share, SHADOW_SOFTNESS * d / t);
       t += d;
@@ -227,7 +235,9 @@ export const raymarchFragmentShader = /* glsl */ `
   }
 
   // Marches the ray from the start distance until it hits the cake, runs
-  // out of steps or passes the end distance, where it leaves the bound.
+  // out of steps or passes the end distance, where it leaves the bound,
+  // stepping IRREGULARITY_STEP_FACTOR of the distance while any layer has
+  // an irregularity.
   Hit march(
     vec3 origin,
     vec3 direction,
@@ -235,6 +245,10 @@ export const raymarchFragmentShader = /* glsl */ `
     float endMeters
   ) {
     Hit hit = Hit(startMeters, 0.0, false);
+    float stepFactor = 1.0;
+    for (int slot = 0; slot < LAYER_SLOTS; slot++) {
+      if (layerCrumbs[slot].w > 0.0) stepFactor = IRREGULARITY_STEP_FACTOR;
+    }
     for (int i = 0; i < MAX_MARCH_STEPS; i++) {
       vec2 field = cakeField(origin + direction * hit.distanceMeters);
       if (field.x < SURFACE_EPSILON_METERS) {
@@ -242,7 +256,7 @@ export const raymarchFragmentShader = /* glsl */ `
         hit.isHit = true;
         break;
       }
-      hit.distanceMeters += field.x;
+      hit.distanceMeters += stepFactor * field.x;
       if (hit.distanceMeters > endMeters) break;
     }
     return hit;
@@ -250,16 +264,16 @@ export const raymarchFragmentShader = /* glsl */ `
 
   // The surface's unit normal at p, from four field reads at the corners
   // of a tetrahedron: iq's technique,
-  // https://iquilezles.org/articles/normalsSDF/. With or without the
-  // topping, as cakeFieldOf() reads the field.
-  vec3 normalAt(vec3 p, bool withTopping) {
+  // https://iquilezles.org/articles/normalsSDF/. With what is hidden left
+  // out, as cakeFieldOf() reads the field.
+  vec3 normalAt(vec3 p, int hidden) {
     const vec2 k = vec2(1.0, -1.0);
     const float e = NORMAL_EPSILON_METERS;
     return normalize(
-      k.xyy * cakeFieldOf(p + k.xyy * e, withTopping).x +
-      k.yyx * cakeFieldOf(p + k.yyx * e, withTopping).x +
-      k.yxy * cakeFieldOf(p + k.yxy * e, withTopping).x +
-      k.xxx * cakeFieldOf(p + k.xxx * e, withTopping).x
+      k.xyy * cakeFieldOf(p + k.xyy * e, hidden).x +
+      k.yyx * cakeFieldOf(p + k.yyx * e, hidden).x +
+      k.yxy * cakeFieldOf(p + k.yxy * e, hidden).x +
+      k.xxx * cakeFieldOf(p + k.xxx * e, hidden).x
     );
   }
 
@@ -278,13 +292,14 @@ export const raymarchFragmentShader = /* glsl */ `
   // directional light, shadowed by the cake, and by the ambient and
   // hemisphere lights. It takes the material id, the unit normal and the
   // point in the world, the unit direction from the point towards the
-  // viewer, and whether the cake's shadows include the topping.
+  // viewer, and what the cake's shadows leave out, as cakeFieldOf() takes
+  // it.
   ReflectedLight shadeAt(
     float materialId,
     vec3 normal,
     vec3 point,
     vec3 toViewer,
-    bool withTopping
+    int hidden
   ) {
     vec3 albedo = cakeAlbedoOf(materialId, point);
     float metalness = cakeMetalnessOf(materialId);
@@ -292,7 +307,11 @@ export const raymarchFragmentShader = /* glsl */ `
     material.diffuseColor = albedo;
     material.diffuseContribution = albedo * (1.0 - metalness);
     material.metalness = metalness;
-    material.roughness = clamp(cakeRoughnessOf(materialId), MIN_ROUGHNESS, 1.0);
+    material.roughness = clamp(
+      cakeRoughnessOf(materialId, point),
+      MIN_ROUGHNESS,
+      1.0
+    );
     material.specularColor = DIELECTRIC_SPECULAR_COLOR;
     material.specularColorBlended = mix(
       DIELECTRIC_SPECULAR_COLOR,
@@ -335,7 +354,7 @@ export const raymarchFragmentShader = /* glsl */ `
           viewMatrix
         );
         directLight.color *=
-          lightShareAt(point, directionToLight, withTopping);
+          lightShareAt(point, directionToLight, hidden);
         RE_Direct(
           directLight,
           geometryPosition,
@@ -379,65 +398,73 @@ export const raymarchFragmentShader = /* glsl */ `
       light.indirectDiffuse + light.indirectSpecular;
   }
 
-  // The light leaving a translucent topping towards the viewer. It takes
-  // the topping's own shading, the ray's unit direction, and the hit's
-  // unit normal and point. The ray is refracted into the topping by
-  // GLAZE_IOR and marched, without the topping, to the part beneath,
-  // which is shaded as any hit and absorbed by Beer–Lambert over the path,
-  // T = exp(-sigma * length),
+  // The light leaving a translucent part, the topping, a layer or a
+  // decoration, towards the viewer. It takes the part's own shading, the
+  // ray's unit direction, the hit's unit normal and point, the part's
+  // colour, its thickness and its reach, in metres, its translucency, 0
+  // to 1, and what cakeFieldOf() hides beneath it. The ray is refracted
+  // into the part by GLAZE_IOR and marched, with the part hidden, to the
+  // part beneath, which is shaded as any hit and absorbed by Beer–Lambert
+  // over the path, T = exp(-sigma * length),
   // https://en.wikipedia.org/wiki/Beer%E2%80%93Lambert_law. Sigma, per
-  // metre and per channel, makes the topping's colour its transmittance
-  // through one thickness, scaled by 1 - translucency, so 0 absorbs as the
-  // colour and 1 not at all: sigma = -ln(colour) / thickness * (1 - tr).
-  // The part beneath is weighted by 1 - Fresnel, Three.js's F_Schlick()
-  // with GLAZE_F0, and the topping's own diffuse by 1 - translucency; its
-  // specular stays whole. A march that meets nothing shades the topping
-  // opaque. The light reaching the part beneath is not absorbed, and a
-  // path that leaves the topping, past a drip's edge, counts as inside it.
-  vec3 throughTopping(
-    ReflectedLight topping,
+  // metre and per channel, makes the colour its transmittance through one
+  // thickness, scaled by 1 - translucency, so 0 absorbs as the colour and
+  // 1 not at all: sigma = -ln(colour) / thickness * (1 - tr). The part
+  // beneath is weighted by 1 - Fresnel, Three.js's F_Schlick() with
+  // GLAZE_F0, and the part's own diffuse by 1 - translucency; its specular
+  // stays whole. A march that meets nothing within
+  // GLAZE_MAX_DISTANCE_PER_THICKNESS reaches shades the part opaque. The
+  // light reaching the part beneath is not absorbed, and a path that
+  // leaves the part, past a drip's edge, counts as inside it.
+  vec3 throughTranslucent(
+    ReflectedLight surface,
     vec3 direction,
     vec3 normal,
-    vec3 point
+    vec3 point,
+    vec3 partColor,
+    float thicknessMeters,
+    float reachMeters,
+    float translucency,
+    int hidden
   ) {
     vec3 refracted = refract(direction, normal, 1.0 / GLAZE_IOR);
-    float thickness = max(toppingThicknessMeters, SURFACE_EPSILON_METERS);
-    float endMeters =
-      GLAZE_MAX_DISTANCE_PER_THICKNESS * (thickness + toppingPileMeters);
+    float thickness = max(thicknessMeters, SURFACE_EPSILON_METERS);
+    float endMeters = GLAZE_MAX_DISTANCE_PER_THICKNESS *
+      max(reachMeters, SURFACE_EPSILON_METERS);
     float t = 0.0;
     vec2 field = vec2(NO_SURFACE_METERS, 0.0);
     for (int i = 0; i < GLAZE_MARCH_STEPS; i++) {
-      field = cakeFieldOf(point + refracted * t, false);
+      field = cakeFieldOf(point + refracted * t, hidden);
       if (field.x < SURFACE_EPSILON_METERS || t > endMeters) break;
       t += field.x;
     }
     if (field.x >= SURFACE_EPSILON_METERS || t > endMeters) {
-      return totalOf(topping);
+      return totalOf(surface);
     }
 
     vec3 beneathPoint = point + refracted * t;
     vec3 beneathLight = totalOf(shadeAt(
       field.y,
-      normalAt(beneathPoint, false),
+      normalAt(beneathPoint, hidden),
       beneathPoint,
       -refracted,
-      false
+      hidden
     ));
     vec3 absorptionPerMeter =
-      -log(max(toppingColor, vec3(GLAZE_MIN_TRANSMITTANCE))) / thickness *
-      (1.0 - toppingTranslucency);
+      -log(max(partColor, vec3(GLAZE_MIN_TRANSMITTANCE))) / thickness *
+      (1.0 - translucency);
     vec3 transmittance = exp(-absorptionPerMeter * t);
     float fresnel = F_Schlick(
       GLAZE_F0,
       1.0,
       saturate(dot(normal, -direction))
     );
-    // Scale the light from beneath by the translucency too, so a topping
+    // Scale the light from beneath by the translucency too, so a part
     // whose translucency springs towards 0 fades smoothly to opaque.
-    return topping.directSpecular + topping.indirectSpecular +
-      (1.0 - toppingTranslucency) *
-        (topping.directDiffuse + topping.indirectDiffuse) +
-      toppingTranslucency * (1.0 - fresnel) * transmittance * beneathLight;
+    return surface.directSpecular + surface.indirectSpecular +
+      (1.0 - translucency) *
+        (surface.directDiffuse + surface.indirectDiffuse) +
+      translucency * (1.0 - fresnel) * transmittance * beneathLight;
   }
 
   void main() {
@@ -452,28 +479,71 @@ export const raymarchFragmentShader = /* glsl */ `
     if (!hit.isHit) discard;
 
     vec3 hitPoint = rayOrigin + rayDirection * hit.distanceMeters;
-    vec3 hitNormal = normalAt(hitPoint, true);
+    vec3 hitNormal = normalAt(hitPoint, HIDE_NONE);
     ReflectedLight reflectedLight = shadeAt(
       hit.materialId,
       hitNormal,
       hitPoint,
       -rayDirection,
-      true
+      HIDE_NONE
     );
 
     // Only a hit on a translucent topping, its own id alone, never a
-    // decoration's above it, pays for the march beneath it.
+    // decoration's above it, on a translucent layer or on a translucent
+    // slot's decoration pays for the march beneath it.
     vec3 outgoingLight = totalOf(reflectedLight);
     if (
       abs(hit.materialId - MATERIAL_TOPPING) < 0.5 &&
       toppingTranslucency > 0.0
     ) {
-      outgoingLight = throughTopping(
+      outgoingLight = throughTranslucent(
         reflectedLight,
         rayDirection,
         hitNormal,
-        hitPoint
+        hitPoint,
+        toppingColor,
+        toppingThicknessMeters,
+        toppingThicknessMeters + toppingPileMeters,
+        toppingTranslucency,
+        HIDE_TOPPING
       );
+    } else if (hit.materialId < MATERIAL_PLATE - 0.5) {
+      int slot = int(hit.materialId + 0.5);
+      if (layerTranslucencies[slot] > 0.0) {
+        outgoingLight = throughTranslucent(
+          reflectedLight,
+          rayDirection,
+          hitNormal,
+          hitPoint,
+          layerColors[slot],
+          layerHeightsMeters[slot],
+          layerHeightsMeters[slot],
+          layerTranslucencies[slot],
+          slot
+        );
+      }
+    } else if (
+      hit.materialId > MATERIAL_SLOT_FIRST - 0.5 &&
+      hit.materialId < MATERIAL_SPRINKLE - 0.5
+    ) {
+      int slot = int(hit.materialId - MATERIAL_SLOT_FIRST + 0.5);
+      int kind = int(decorationKinds[slot] + 0.5);
+      float translucency = DECORATION_TRANSLUCENCIES[kind];
+      if (translucency > 0.0) {
+        float sizeMeters = 2.0 * DECORATION_HALF_HEIGHTS_METERS[kind] *
+          decorationScales[slot];
+        outgoingLight = throughTranslucent(
+          reflectedLight,
+          rayDirection,
+          hitNormal,
+          hitPoint,
+          decorationColors[slot],
+          sizeMeters,
+          sizeMeters,
+          translucency,
+          HIDE_DECORATION_FIRST + slot
+        );
+      }
     }
     gl_FragColor = vec4(outgoingLight, 1.0);
     #include <tonemapping_fragment>

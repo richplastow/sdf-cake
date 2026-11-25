@@ -11,7 +11,7 @@ type: plan
   1000 CSS px square, and headroom for the topping, the decorations and
   the crumb that [Plan 04](./04-topping.md),
   [Plan 06](./06-decorations.md) and
-  [Plan 08](../todo/08-crumb.md) add to the same field.
+  [Plan 08](./08-crumb.md) add to the same field.
 - Measured at [Plan 02](./02-plate-and-layers.md)'s Manual QA
   (Chrome on the M4, `#black-forest`, view reset, mean of 300 animation
   frames): 24.0 ms per frame at a device pixel ratio of 2, and 16.6 ms,

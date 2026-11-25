@@ -14,12 +14,19 @@ import { DECORATION_SLOTS, LAYER_SLOTS } from "./slots.js";
 // nothing else.
 const BOUND_MARGIN_METERS = 0.002;
 const FULL_TURN_RADIANS = 2 * Math.PI;
+// The kinds of inclusion, in the order of a layer's `inclusionWeights`, as
+// a recipe layer's `inclusions` names their counts.
+const INCLUSION_COUNT_KEYS = ["chocolateChips", "nuts", "raisins"];
 // The greatest drip term a recipe may hold, unitless: the slope of the
 // drips' cut-off round the cake, half the drip amplitude times the waves
 // over the least radius a drip can end on. src/sdf/topping.js scales the
 // term by its DRIP_STEP_FACTOR, 0.45, which keeps the field from
 // overestimating for a slope up to 1.98; 1.9 leaves a margin.
 const MAX_DRIP_TERM = 1.9;
+// The greatest irregularity a layer may have, in metres: src/sdf/crumb.js
+// raises the field's gradient to about 1.08 at it, which the march's
+// IRREGULARITY_STEP_FACTOR, 0.9, keeps safe.
+const MAX_IRREGULARITY_METERS = 0.002;
 // The colour of a part a cake lacks, and of an unused layer slot: black, as
 // an sRGB `#rrggbb` string.
 const NO_PART_COLOR = "#000000";
@@ -39,7 +46,14 @@ export const EATEN_MAX_RADIANS = FULL_TURN_RADIANS - SLIVER_RADIANS;
  * - The layers always number `LAYER_SLOTS`. Each layer's `bottomMeters` is
  *   the sum of the heights beneath it; an unused slot is inert, at the
  *   stack's top with zero height, radii and rounding, coloured `#000000`
- *   with roughness 0.
+ *   with roughness 0, and with no crumb.
+ * - Each layer's crumb: its material's `holeStrength`, 0 to 1, and
+ *   `holeCellMeters`; its `inclusionCellMeters`, the cube root of its
+ *   volume over its inclusions' total count, 0 for none; its
+ *   `inclusionWeights`, the chips', nuts' and raisins' shares of that
+ *   count, all 0 for none; and its `irregularityMeters`.
+ * - Each layer's `translucency`, 0 to 1, is its material's, defaulting to
+ *   0, opaque.
  * - A cake with no plate resolves to a plate of all zeros, coloured
  *   `#000000`.
  * - The eaten angle is the least fraction of a full turn, in radians,
@@ -55,10 +69,11 @@ export const EATEN_MAX_RADIANS = FULL_TURN_RADIANS - SLIVER_RADIANS;
  *   `radiusMeters`, the crown radius, is that layer's top radius. A `null`
  *   topping, or a cake with no layers, resolves to a topping of all zeros,
  *   coloured `#000000`.
- * - The stack's cylinder grows by the topping's thickness, and the most its
- *   smoothing can push the coat further out, in radius, and by the same
- *   plus its pile and its tallest decoration at the top, as
- *   writeCakeBounds() works them out.
+ * - The stack's cylinder grows by its layers' greatest irregularity all
+ *   round, and by the topping's thickness, and the most its smoothing can
+ *   push the coat further out, in radius, and by the same plus its pile
+ *   and its tallest decoration at the top, as writeCakeBounds() works
+ *   them out.
  * - The topping's `translucency`, 0 to 1, defaults to 0, opaque.
  * - Colours stay sRGB `#rrggbb` strings, as the palette gives them.
  * @param recipe A recipe, as src/cake/recipes.js holds them.
@@ -72,6 +87,8 @@ export const resolveRecipe = (recipe) => {
   let stackTopMeters = 0;
   for (const layer of recipe.layers) {
     const material = MATERIALS[layer.material];
+    const counts = INCLUSION_COUNT_KEYS.map((key) => layer.inclusions[key]);
+    const total = counts.reduce((sum, count) => sum + count, 0);
     layers.push({
       bottomMeters: stackTopMeters,
       heightMeters: layer.heightMeters,
@@ -80,6 +97,13 @@ export const resolveRecipe = (recipe) => {
       roundingMeters: layer.roundingMeters,
       color: material.color,
       roughness: material.roughness,
+      holeStrength: material.holeStrength,
+      holeCellMeters: material.holeCellMeters,
+      inclusionCellMeters:
+        total > 0 ? Math.cbrt(layerVolumeMeters3(layer) / total) : 0,
+      inclusionWeights: counts.map((count) => (total > 0 ? count / total : 0)),
+      irregularityMeters: layer.irregularityMeters,
+      translucency: material.translucency ?? 0,
     });
     stackTopMeters += layer.heightMeters;
   }
@@ -92,6 +116,12 @@ export const resolveRecipe = (recipe) => {
       roundingMeters: 0,
       color: NO_PART_COLOR,
       roughness: 0,
+      holeStrength: 0,
+      holeCellMeters: 0,
+      inclusionCellMeters: 0,
+      inclusionWeights: [0, 0, 0],
+      irregularityMeters: 0,
+      translucency: 0,
     });
   }
 
@@ -139,7 +169,8 @@ export const eatenRadiansForFraction = (fraction) =>
  *   topping whose coverage is above 0, and decorations whose counts total
  *   above 0.
  * - It holds at most `LAYER_SLOTS` layers, and each layer's rounding is at
- *   most the least of its radii and half its height.
+ *   most the least of its radii and half its height, and its
+ *   `irregularityMeters` lies within 0 and `MAX_IRREGULARITY_METERS`.
  * - Its countable decorations, every kind but a scattered one, total at
  *   most `DECORATION_SLOTS`.
  * - Every material it names, the plate's, the topping's and each layer's,
@@ -203,6 +234,15 @@ export const validateRecipe = (recipe) => {
           "height.",
       );
     }
+    if (
+      !(layer.irregularityMeters >= 0) ||
+      layer.irregularityMeters > MAX_IRREGULARITY_METERS
+    ) {
+      problems.push(
+        `Layer ${index}'s irregularity lies outside 0 to ` +
+          `${MAX_IRREGULARITY_METERS} m.`,
+      );
+    }
   });
 
   const materialNames = [
@@ -260,9 +300,10 @@ export const validateRecipe = (recipe) => {
  *   plus half its thickness.
  * - The stack's spans the lowest bottom of its used layers, those taller
  *   than 0, to their highest top, of radius the widest of their two radii,
- *   grown by the topping's thickness and the most its smoothing can push
- *   the coat further out, in radius, and by the same, its pile and its
- *   tallest decoration at the top.
+ *   grown all round by their greatest irregularity, then by the topping's
+ *   thickness and the most its smoothing can push the coat further out,
+ *   in radius, and by the same, its pile and its tallest decoration at
+ *   the top.
  * - Each grows by `BOUND_MARGIN_METERS`; a part a cake lacks has a
  *   cylinder of all zeros, with no margin.
  * - Reads lengths below 0, which a spring can pass through, as 0, so it
@@ -273,7 +314,8 @@ export const validateRecipe = (recipe) => {
  * @param decorationHeightMeters The most any of the cake's decorations
  *   stands above the topping's surface, in metres, 0 for none.
  * @param layers The cake's layers, each its `bottomMeters`,
- *   `heightMeters`, `bottomRadiusMeters` and `topRadiusMeters`.
+ *   `heightMeters`, `bottomRadiusMeters`, `topRadiusMeters` and
+ *   `irregularityMeters`.
  * @param plate The cake's plate, its lengths in metres.
  * @param topping The cake's topping, its lengths in metres.
  * @returns The bounds.
@@ -301,9 +343,14 @@ export const writeCakeBounds = (
   let stackBottomMeters = Infinity;
   let stackTopMeters = -Infinity;
   let widestRadiusMeters = 0;
+  let irregularityMeters = 0;
   for (let slot = 0; slot < layers.length; slot++) {
     const layer = layers[slot];
     if (layer.heightMeters <= 0) continue;
+    irregularityMeters = Math.max(
+      irregularityMeters,
+      layer.irregularityMeters,
+    );
     stackBottomMeters = Math.min(stackBottomMeters, layer.bottomMeters);
     stackTopMeters = Math.max(
       stackTopMeters,
@@ -322,11 +369,13 @@ export const writeCakeBounds = (
   const toppingThicknessMeters = Math.max(topping.thicknessMeters, 0);
   const bulgedThicknessMeters =
     (1 + SKIRT_BULGE_PER_THICKNESS) * toppingThicknessMeters;
+  // A displaced layer reaches up to its irregularity beyond its cone.
   writeBoundingCylinder(
     bounds.stack,
-    stackBottomMeters,
-    widestRadiusMeters + bulgedThicknessMeters,
+    stackBottomMeters - irregularityMeters,
+    widestRadiusMeters + irregularityMeters + bulgedThicknessMeters,
     stackTopMeters +
+      irregularityMeters +
       bulgedThicknessMeters +
       Math.max(topping.pileMeters, 0) +
       Math.max(decorationHeightMeters, 0),
@@ -363,6 +412,22 @@ const writeBoundingCylinder = (
   cylinder.radiusMeters = radiusMeters + BOUND_MARGIN_METERS;
   cylinder.topMeters = topMeters + BOUND_MARGIN_METERS;
 };
+
+/** #### Gives a recipe layer's volume, as its cone's, unrounded
+ * - A frustum of its height and two radii, in metres.
+ * @returns The volume, in cubic metres.
+ */
+const layerVolumeMeters3 = ({
+  bottomRadiusMeters,
+  heightMeters,
+  topRadiusMeters,
+}) =>
+  (Math.PI *
+    heightMeters *
+    (bottomRadiusMeters * bottomRadiusMeters +
+      bottomRadiusMeters * topRadiusMeters +
+      topRadiusMeters * topRadiusMeters)) /
+  3;
 
 /** Says whether a number lies within 0 and 1, both included. */
 const isFraction = (value) => value >= 0 && value <= 1;

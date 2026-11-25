@@ -187,7 +187,7 @@ export const RECIPES = [
       translucency: 0.7,
     },
     decorations: [],
-    eaten: { steps: 6, minFraction: 0, maxFraction: 1 },
+    eaten: { steps: 6, minFraction: 0, maxFraction: 0.9 },
   },
   {
     id: "custard-pie",
@@ -228,7 +228,7 @@ export const RECIPES = [
       dripMeters: 0,
       dripWaves: 0,
     },
-    decorations: [{ kind: "cherry", count: 1, color: "#b3121f" }],
+    decorations: [{ kind: "cherry", count: 1, color: "#841027" }],
     eaten: { steps: 4, minFraction: 0.2, maxFraction: 0.75 },
   },
   {
@@ -298,7 +298,7 @@ export const RECIPES = [
       dripWaves: 0,
     },
     decorations: [
-      { kind: "cherry", count: 8, color: "#b3121f" },
+      { kind: "cherry", count: 8, color: "#841027" },
       { kind: "flake", count: 120, color: "#24140b" },
     ],
     eaten: { steps: 7, minFraction: 0.1, maxFraction: 0.9 },
@@ -328,8 +328,8 @@ export const RECIPES = [
     },
     decorations: [
       { kind: "almond", count: 12, color: "#c89a68" },
-      { kind: "orangeSlice", count: 3, color: "#f28c28" },
+      { kind: "orangeSlice", count: 3, color: "#b5500f" },
     ],
-    eaten: { steps: 1, minFraction: 0.25, maxFraction: 0.25 },
+    eaten: { steps: 5, minFraction: 0.1, maxFraction: 0.75 },
   },
 ];
