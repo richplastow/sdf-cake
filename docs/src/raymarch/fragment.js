@@ -46,8 +46,6 @@ export const raymarchFragmentShader = /* glsl */ `
   const float SHADOW_START_METERS = 0.002;
   const float SHADOW_MAX_DISTANCE_METERS = 0.5;
   const float SHADOW_SOFTNESS = 24.0;
-  // The margin beyond the cake's extent of the sphere that bounds it.
-  const float BOUND_MARGIN_METERS = 0.01;
   // A physical material's least roughness, as Three.js's own shading sets
   // it, so a light always shows a highlight.
   const float MIN_ROUGHNESS = 0.045;
@@ -122,10 +120,16 @@ export const raymarchFragmentShader = /* glsl */ `
   }
 
   // How far along the ray it enters the sphere of the radius about the
-  // origin: 0.0 where it starts inside, or -1.0 where it misses.
-  float sphereEntry(vec3 origin, vec3 direction, float radius) {
-    float b = dot(origin, direction);
-    float c = dot(origin, origin) - radius * radius;
+  // centre: 0.0 where it starts inside, or -1.0 where it misses.
+  float sphereEntry(
+    vec3 center,
+    vec3 direction,
+    vec3 origin,
+    float radius
+  ) {
+    vec3 fromCenter = origin - center;
+    float b = dot(fromCenter, direction);
+    float c = dot(fromCenter, fromCenter) - radius * radius;
     float h = b * b - c;
     if (h < 0.0) return -1.0;
     return max(-b - sqrt(h), 0.0);
@@ -135,11 +139,13 @@ export const raymarchFragmentShader = /* glsl */ `
     vec3 rayOrigin = cameraPosition;
     vec3 rayDirection = rayDirectionAt(vNdc);
 
-    // A ray that misses the cake's bounding sphere never marches.
+    // A ray that misses the cake's bounding sphere, on the Y axis, never
+    // marches.
     float entryMeters = sphereEntry(
-      rayOrigin,
+      vec3(0.0, boundCenterYMeters, 0.0),
       rayDirection,
-      cakeBoundRadius() + BOUND_MARGIN_METERS
+      rayOrigin,
+      boundRadiusMeters
     );
     if (entryMeters < 0.0) discard;
     Hit hit = march(rayOrigin, rayDirection, entryMeters);

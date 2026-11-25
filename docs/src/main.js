@@ -1,13 +1,13 @@
 /**
  * @fileoverview
- * Entry point: raymarches a cake, lit by the scene's lights, on a
- * transparent canvas, and turns it slowly like a turntable. A drag on the
- * canvas turns and tilts it, pausing the slow turn while held; the scroll
- * wheel, a trackpad's scroll or pinch, a touch screen's pinch, and a
- * Cmd-drag up and down, or a Ctrl-drag off Apple devices, zoom; a
- * double-click eases the drag's
- * turn and tilt and the zoom back to the view at load. That is the whole
- * of Presentation Mode, the only mode so far.
+ * Entry point: raymarches the cake the location hash names, or the first
+ * in walk order, lit by the scene's lights, on a transparent canvas, and
+ * turns it slowly like a turntable. A drag on the canvas turns and tilts
+ * it, pausing the slow turn while held; the scroll wheel, a trackpad's
+ * scroll or pinch, a touch screen's pinch, and a Cmd-drag up and down, or
+ * a Ctrl-drag off Apple devices, zoom; a double-click eases the drag's turn
+ * and tilt and the zoom back to the view at load. That is the whole of
+ * Presentation Mode, the only mode so far.
  */
 
 import {
@@ -19,6 +19,9 @@ import {
   Timer,
   WebGLRenderer,
 } from "three";
+import { RECIPES } from "./cake/recipes.js";
+import { resolveRecipe } from "./cake/resolve.js";
+import { cakeIndexForHash } from "./cake/select.js";
 import { connectDrag } from "./input/drag.js";
 import {
   startViewReset,
@@ -30,8 +33,9 @@ import {
 import { connectZoom } from "./input/zoom.js";
 import { createLights } from "./scene/lights.js";
 import { createRaymarchQuad } from "./scene/quad.js";
+import { writeCakeUniforms } from "./sdf/cake.js";
 
-const CAMERA_DISTANCE_METERS = 0.4; // from the cake's centre, at load
+const CAMERA_DISTANCE_METERS = 0.4; // from the stack's middle, at load
 const CAMERA_ELEVATION_RADIANS = MathUtils.degToRad(22); // above the table
 const CAMERA_FAR_METERS = 10;
 const CAMERA_FOV_DEGREES = 35; // vertical; Three.js takes degrees
@@ -40,7 +44,7 @@ const FULL_TURN_RADIANS = 2 * Math.PI;
 // The slow turn of the turntable while nothing holds it: a lap in 30 s.
 const IDLE_TURN_RADIANS_PER_SECOND = MathUtils.degToRad(12);
 // The zoom's limits: near enough to see the crumb, about 5 cm from the
-// icing's rim, and far enough to see the cake whole on a phone. First
+// cake's rim, and far enough to see the cake whole on a phone. First
 // guesses, to tune by eye.
 const MAX_CAMERA_DISTANCE_METERS = 1.2;
 const MIN_CAMERA_DISTANCE_METERS = 0.15;
@@ -74,7 +78,7 @@ const camera = new PerspectiveCamera(
   CAMERA_NEAR_METERS,
   CAMERA_FAR_METERS,
 );
-// Raised above the cake on the +Z side, looking down at its centre.
+// Raised above the rig's centre on the +Z side, looking down at it.
 camera.rotation.x = -CAMERA_ELEVATION_RADIANS;
 
 // The camera and the lights ride one rig, which turns round the cake by
@@ -83,7 +87,18 @@ camera.rotation.x = -CAMERA_ELEVATION_RADIANS;
 // lights that keep their place beside the viewer.
 const rig = new Group();
 rig.add(camera, ...createLights());
-scene.add(rig, createRaymarchQuad(camera));
+const quad = createRaymarchQuad(camera);
+scene.add(rig, quad);
+
+// The cake the hash names, written into the material's own uniforms once,
+// at load. The rig sits on the cake's axis at half the stack's height, so
+// the camera looks at the stack's middle and the turn is about the axis.
+const recipe = RECIPES[cakeIndexForHash(location.hash, RECIPES)];
+const cake = resolveRecipe(recipe);
+writeCakeUniforms(quad.material.uniforms, cake);
+// The last slot's top is the stack's top, whether the slot is used or inert.
+const lastSlot = cake.layers.at(-1);
+rig.position.y = 0.5 * (lastSlot.bottomMeters + lastSlot.heightMeters);
 
 // The view a drag, a zoom and a double-click change, and its ease back to
 // the view at load; done at load.

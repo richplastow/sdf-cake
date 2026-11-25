@@ -22,9 +22,12 @@ const QUAD_SIZE_CLIP = 2; // the quad spans clip space, -1 to 1
  *   the light uniforms that UniformsLib.lights declares from the scene's
  *   lights, and `dfgLUT`, the lookup texture Three.js's physical shading
  *   reads, from its own.
- * - UniformsUtils.merge() clones every value it is given, so the camera's
- *   two matrices, which the shader must read live, are added after the
- *   merge by reference: the camera updates both in place.
+ * - UniformsUtils.merge() clones each Color, matrix, vector and texture it
+ *   is given, those in an array included, but passes a Float32Array by
+ *   reference. The camera's two matrices, which the shader must read live,
+ *   are therefore added after the merge by reference, as the camera
+ *   updates both in place; and a cake is written into the material's own
+ *   `uniforms`, never into the object createCakeUniforms() returned.
  * - The quad is never frustum culled: its corners are clip-space corners,
  *   which Three.js would otherwise test against the camera's frustum as if
  *   they were world positions.

@@ -1,98 +1,149 @@
 /**
  * @fileoverview
- * The cake's signed distance field, a round sponge under a shell of icing
- * with a slice cut out, as a GLSL chunk and the uniforms it reads.
+ * The cake's signed distance field, a plate under a stack of layers with
+ * the eaten slice cut from the stack, as a GLSL chunk, the uniforms it
+ * reads, and the writer that copies a resolved cake into them.
  */
 
-import { Color, MathUtils } from "three";
-
-const CAKE_HEIGHT_METERS = 0.07;
-const CAKE_RADIUS_METERS = 0.09; // an 18 cm cake
-const ICING_COLOR = 0xf2a1bb; // strawberry pink, sRGB
-const ICING_ROUNDING_METERS = 0.006; // the icing's softened edges
-const ICING_THICKNESS_METERS = 0.005;
-const SLICE_ANGLE_RADIANS = MathUtils.degToRad(48); // the slice cut out
-const SPONGE_COLOR = 0xe9c46a; // golden sponge, sRGB
+import { Color } from "three";
+import { LAYER_SLOTS } from "../cake/slots.js";
+import { layersChunk } from "./layers.js";
+import { plateChunk } from "./plate.js";
 
 /** #### The GLSL chunk of the cake's field
- * - Needs the primitives chunk, src/sdf/primitives.js, pasted before it.
+ * - Needs the primitives chunk, src/sdf/primitives.js, and Three.js's
+ *   `common` chunk, for `PI` and `PI_HALF`, pasted before it. It pastes the
+ *   plate's and the layers' chunks itself.
  * - Reads the uniforms createCakeUniforms() declares, so a change to any
  *   of them reshapes or recolours the cake with no new shader.
  * - cakeField() returns the distance in metres, negative inside the cake,
- *   and the id of the material at the nearest surface, which the other
- *   functions map to the surface's albedo, roughness and metalness.
+ *   and the id of the material at the nearest surface: a layer's slot, 0
+ *   to 6, or the plate's 7, which the other functions map to the
+ *   surface's albedo, roughness and metalness.
  */
 export const cakeChunk = /* glsl */ `
-  uniform float cakeHeightMeters;
-  uniform float cakeRadiusMeters;
-  uniform vec3 icingColor;
-  uniform float icingRoundingMeters;
-  uniform float icingThicknessMeters;
-  uniform float sliceAngleRadians;
-  uniform vec3 spongeColor;
+  ${plateChunk}
+  ${layersChunk}
 
-  // The materials the field names, by id, and how they take the light.
-  const float ICING_ID = 1.0;
-  const float ICING_ROUGHNESS = 0.35; // glossy, as set icing is
-  const float SPONGE_ID = 0.0;
-  const float SPONGE_ROUGHNESS = 0.9; // matt, as crumb is
-  const float CAKE_METALNESS = 0.0; // neither is a metal
+  uniform float boundCenterYMeters;
+  uniform float boundRadiusMeters;
+  uniform float eatenAngleRadians;
+
+  const float LAYER_METALNESS = 0.0; // no layer is a metal
 
   vec3 cakeAlbedoOf(float materialId) {
-    return materialId < 0.5 ? spongeColor : icingColor;
+    if (materialId < MATERIAL_PLATE - 0.5) {
+      return layerColors[int(materialId + 0.5)];
+    }
+    return plateColor;
   }
 
-  // The radius of the sphere about the origin that holds the whole cake.
-  float cakeBoundRadius() {
-    return length(vec2(
-      cakeRadiusMeters + icingThicknessMeters,
-      0.5 * cakeHeightMeters + icingThicknessMeters
-    ));
+  // The stack's distance with the eaten slice cut from it. Up to half a
+  // turn the cut is a wedge about +X. Past it, the stack is intersected,
+  // by iq's opIntersection, a bound, with the complementary wedge about
+  // -X, which wedgeDistance() gives with p.x negated; both forms agree at
+  // half a turn. An angle of 0 cuts nothing and is skipped, as its wedge
+  // would be the half-plane z = 0 on the +X side, which bends the normals
+  // along it.
+  float eatenStackDistance(vec3 p, float stack) {
+    if (eatenAngleRadians <= 0.0) return stack;
+    float halfAngle = 0.5 * eatenAngleRadians;
+    if (halfAngle <= PI_HALF) {
+      return subtractDistance(wedgeDistance(p, halfAngle), stack);
+    }
+    return max(wedgeDistance(vec3(-p.x, p.y, p.z), PI - halfAngle), stack);
   }
 
   // The field at p: x is the distance to the cake in metres, negative
-  // inside it, and y the id of the material at its nearest surface.
+  // inside it, and y the id of the material at its nearest surface. The
+  // slice is cut from the stack alone, never from the plate.
   vec2 cakeField(vec3 p) {
-    float halfHeight = 0.5 * cakeHeightMeters;
-    // The sponge is the whole cake's shape, a cylinder on the Y axis
-    // centred on the origin.
-    float sponge = cappedCylinderDistance(p, halfHeight, cakeRadiusMeters);
-    // The icing coats its top and side: a rounded shell one thickness out,
-    // raised by half a thickness so its base stays level with the sponge's.
-    float icingOuter = roundedCylinderDistance(
-      p - vec3(0.0, 0.5 * icingThicknessMeters, 0.0),
-      halfHeight + 0.5 * icingThicknessMeters,
-      cakeRadiusMeters + icingThicknessMeters,
-      icingRoundingMeters
-    );
-    float icing = subtractDistance(sponge, icingOuter);
-    // A slice is cut from both: a wedge about +X.
-    float slice = wedgeDistance(p, 0.5 * sliceAngleRadians);
-    sponge = subtractDistance(slice, sponge);
-    icing = subtractDistance(slice, icing);
-    return sponge < icing ? vec2(sponge, SPONGE_ID) : vec2(icing, ICING_ID);
+    vec2 stack = layersField(p);
+    stack.x = eatenStackDistance(p, stack.x);
+    vec2 plate = plateField(p);
+    return plate.x < stack.x ? plate : stack;
   }
 
   float cakeMetalnessOf(float materialId) {
-    return CAKE_METALNESS;
+    return materialId < MATERIAL_PLATE - 0.5 ? LAYER_METALNESS : plateMetalness;
   }
 
   float cakeRoughnessOf(float materialId) {
-    return materialId < 0.5 ? SPONGE_ROUGHNESS : ICING_ROUGHNESS;
+    if (materialId < MATERIAL_PLATE - 0.5) {
+      return layerRoughnesses[int(materialId + 0.5)];
+    }
+    return plateRoughness;
   }
 `;
 
-/** #### Creates the cake's uniforms, at their starting values
+/** #### Creates the cake's uniforms, empty until a cake is written in
  * - Each is a parameter the field reads: lengths in metres, angles in
  *   radians, and colours as Color, which Three.js uploads in linear space.
- * @returns The uniforms, keyed by the names the chunk declares.
+ * - The layers' numbers are Float32Arrays and their colours an array of
+ *   Color, `LAYER_SLOTS` entries each, made once and written in place.
+ * - Every value starts at zero, which draws nothing, as the bound's radius
+ *   is 0: writeCakeUniforms() fills them.
+ * @returns The uniforms, keyed by the names the chunks declare.
  */
 export const createCakeUniforms = () => ({
-  cakeHeightMeters: { value: CAKE_HEIGHT_METERS },
-  cakeRadiusMeters: { value: CAKE_RADIUS_METERS },
-  icingColor: { value: new Color(ICING_COLOR) },
-  icingRoundingMeters: { value: ICING_ROUNDING_METERS },
-  icingThicknessMeters: { value: ICING_THICKNESS_METERS },
-  sliceAngleRadians: { value: SLICE_ANGLE_RADIANS },
-  spongeColor: { value: new Color(SPONGE_COLOR) },
+  boundCenterYMeters: { value: 0 },
+  boundRadiusMeters: { value: 0 },
+  eatenAngleRadians: { value: 0 },
+  layerBottomRadiiMeters: { value: new Float32Array(LAYER_SLOTS) },
+  layerBottomsMeters: { value: new Float32Array(LAYER_SLOTS) },
+  layerColors: {
+    value: Array.from({ length: LAYER_SLOTS }, () => new Color()),
+  },
+  layerHeightsMeters: { value: new Float32Array(LAYER_SLOTS) },
+  layerRoughnesses: { value: new Float32Array(LAYER_SLOTS) },
+  layerRoundingsMeters: { value: new Float32Array(LAYER_SLOTS) },
+  layerTopRadiiMeters: { value: new Float32Array(LAYER_SLOTS) },
+  plateBaseRadiusMeters: { value: 0 },
+  plateColor: { value: new Color() },
+  plateLipHeightMeters: { value: 0 },
+  plateMetalness: { value: 0 },
+  plateRimRadiusMeters: { value: 0 },
+  plateRoughness: { value: 0 },
+  plateSweepHeightMeters: { value: 0 },
+  plateThicknessMeters: { value: 0 },
 });
+
+/** #### Copies a resolved cake into the cake's uniforms, in place
+ * - Writes into the arrays and Color objects the uniforms already hold, so
+ *   it must be given the material's own `uniforms`: UniformsUtils.merge()
+ *   cloned each Color when the material was made, and the object
+ *   createCakeUniforms() returned is no longer read.
+ * - Each colour is set by Color.set() from its sRGB `#rrggbb` string, which
+ *   Three.js converts into its linear working colour space.
+ * - Allocates nothing but what Color.set() spends parsing each string.
+ * @param uniforms The material's uniforms, as createCakeUniforms() made
+ *   them and UniformsUtils.merge() copied them.
+ * @param values The resolved cake, as resolveRecipe() returns it.
+ */
+export const writeCakeUniforms = (uniforms, values) => {
+  const { layers, plate } = values;
+
+  uniforms.boundCenterYMeters.value = values.boundCenterYMeters;
+  uniforms.boundRadiusMeters.value = values.boundRadiusMeters;
+  uniforms.eatenAngleRadians.value = values.eatenAngleRadians;
+
+  for (let slot = 0; slot < LAYER_SLOTS; slot++) {
+    const layer = layers[slot];
+    uniforms.layerBottomRadiiMeters.value[slot] = layer.bottomRadiusMeters;
+    uniforms.layerBottomsMeters.value[slot] = layer.bottomMeters;
+    uniforms.layerColors.value[slot].set(layer.color);
+    uniforms.layerHeightsMeters.value[slot] = layer.heightMeters;
+    uniforms.layerRoughnesses.value[slot] = layer.roughness;
+    uniforms.layerRoundingsMeters.value[slot] = layer.roundingMeters;
+    uniforms.layerTopRadiiMeters.value[slot] = layer.topRadiusMeters;
+  }
+
+  uniforms.plateBaseRadiusMeters.value = plate.baseRadiusMeters;
+  uniforms.plateColor.value.set(plate.color);
+  uniforms.plateLipHeightMeters.value = plate.lipHeightMeters;
+  uniforms.plateMetalness.value = plate.metalness;
+  uniforms.plateRimRadiusMeters.value = plate.rimRadiusMeters;
+  uniforms.plateRoughness.value = plate.roughness;
+  uniforms.plateSweepHeightMeters.value = plate.sweepHeightMeters;
+  uniforms.plateThicknessMeters.value = plate.thicknessMeters;
+};
