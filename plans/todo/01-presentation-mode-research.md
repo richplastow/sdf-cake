@@ -572,7 +572,7 @@ accepted and the next rejected.
    slice past 180°, and the cake chosen by the location hash. Visible
    proof: each cake's plate and layers, bare, with the slice showing the
    layers.
-2. [Plan 03, The frame budget](03-frame-budget.md): the pixel-ratio
+2. [Plan 03, The frame budget](../done/03-frame-budget.md): the pixel-ratio
    cap, a cheap bound per part, and marches that end where nothing is left
    to hit, so the heaviest cake holds 60 fps with room for the parts to
    come. Visible proof: the same cakes as Plan 02, at a steady frame time.

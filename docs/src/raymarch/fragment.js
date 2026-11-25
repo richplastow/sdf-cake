@@ -32,10 +32,22 @@ export const raymarchFragmentShader = /* glsl */ `
 
   varying vec2 vNdc;
 
-  // The march: its most steps, how far it goes, in metres, and how close
-  // to the surface counts as hitting it.
-  const int MAX_MARCH_STEPS = 96;
-  const float MAX_MARCH_DISTANCE_METERS = 2.0;
+  // The march: its most steps, and how close to the surface, in metres,
+  // counts as hitting it. It ends where its ray leaves the bound.
+  //
+  // A ray that runs almost parallel to a flat face, such as a cut's face
+  // seen edge-on or a layer's top seen from just above it, crawls: every
+  // step is the ray's own offset from that face, a few tenths of a
+  // millimetre, so it needs one step per offset along the whole cake, not
+  // the handful a head-on ray needs. At 96 steps such a ray ran out and
+  // its fragment was discarded, which showed the page through the cake.
+  // 768 is where the last of them lands, measured in a port of this march
+  // over the six cakes, the turn in 30 degree steps, five tilts and both
+  // ends of the zoom; only a crawling ray pays for the steps, so the mean
+  // over the six cakes at the view at load is 3.87 march steps a pixel
+  // either way. The cap scales with the frame's height in pixels, since
+  // the offset a ray crawls at is about a pixel's footprint.
+  const int MAX_MARCH_STEPS = 768;
   const float SURFACE_EPSILON_METERS = 0.0001;
   // The offset either side of a hit point over which the normal is read.
   const float NORMAL_EPSILON_METERS = 0.0005;
@@ -46,6 +58,26 @@ export const raymarchFragmentShader = /* glsl */ `
   const float SHADOW_START_METERS = 0.002;
   const float SHADOW_MAX_DISTANCE_METERS = 0.5;
   const float SHADOW_SOFTNESS = 24.0;
+  // How far the shadow march's bound passes the cake's, in metres, so it
+  // can end where its ray leaves the bound and still shade exactly as one
+  // that runs its full distance. iq's soft shadow takes the least of
+  // SHADOW_SOFTNESS * d / t along the ray, so a ray passing near the cake
+  // darkens even outside the cake's cylinders. Every part lies inside its
+  // cylinder, and the cut only raises the stack's distance, so outside the
+  // cylinders grown by this margin d is at least the margin; with t at
+  // most SHADOW_MAX_DISTANCE_METERS, the term is then at least 1, and
+  // cannot lower the share. About 20.8 mm.
+  const float SHADOW_BOUND_MARGIN_METERS =
+    SHADOW_MAX_DISTANCE_METERS / SHADOW_SOFTNESS;
+  // The least a ray's direction may move along an axis, or across it, for
+  // the cylinder test to divide by that movement: unitless, as the
+  // direction is a unit vector. A ray that moves less is taken as level
+  // with the axis's slab, or parallel to the axis; with the bound's 2 mm
+  // margin, no march reaches far enough for the difference to show.
+  const float MIN_SPAN_DIRECTION = 1e-6;
+  // The span of a ray that misses a bound, in metres: an exit behind the
+  // ray's origin.
+  const vec2 NO_SPAN_METERS = vec2(-1.0);
   // A physical material's least roughness, as Three.js's own shading sets
   // it, so a light always shows a highlight.
   const float MIN_ROUGHNESS = 0.045;
@@ -64,10 +96,94 @@ export const raymarchFragmentShader = /* glsl */ `
     bool isHit;
   };
 
+  // How far along the ray, in metres, it enters and leaves the cylinder on
+  // the Y axis from the bottom to the top of the radius: the slab in y
+  // intersected with the quadratic in xz, after iq's capped-cylinder
+  // intersector, https://iquilezles.org/articles/intersectors/. A ray
+  // parallel to the axis takes the slab's test alone, and one level with
+  // the slab the quadratic's alone, so neither divides by zero. A span
+  // that starts behind the ray's origin starts at 0.0, as for a ray from
+  // inside the cylinder. A span that ends behind it, a cylinder of zero
+  // radius, and a ray that misses give NO_SPAN_METERS.
+  vec2 cylinderSpan(
+    float bottom,
+    vec3 direction,
+    vec3 origin,
+    float radius,
+    float top
+  ) {
+    if (radius <= 0.0) return NO_SPAN_METERS;
+    // Unbounded until a test bounds them, as one always does: a unit
+    // direction cannot be both level with the slab and parallel to the axis.
+    float entryMeters = -NO_SURFACE_METERS;
+    float exitMeters = NO_SURFACE_METERS;
+
+    // The slab in y.
+    if (abs(direction.y) >= MIN_SPAN_DIRECTION) {
+      float toBottom = (bottom - origin.y) / direction.y;
+      float toTop = (top - origin.y) / direction.y;
+      entryMeters = min(toBottom, toTop);
+      exitMeters = max(toBottom, toTop);
+    } else if (origin.y < bottom || origin.y > top) {
+      return NO_SPAN_METERS;
+    }
+
+    // The quadratic in xz: |origin.xz + t * direction.xz| = radius.
+    float a = dot(direction.xz, direction.xz);
+    float b = dot(origin.xz, direction.xz);
+    float c = dot(origin.xz, origin.xz) - radius * radius;
+    if (a >= MIN_SPAN_DIRECTION * MIN_SPAN_DIRECTION) {
+      float h = b * b - a * c;
+      if (h < 0.0) return NO_SPAN_METERS;
+      h = sqrt(h);
+      entryMeters = max(entryMeters, (-b - h) / a);
+      exitMeters = min(exitMeters, (-b + h) / a);
+    } else if (c > 0.0) {
+      return NO_SPAN_METERS;
+    }
+
+    if (exitMeters < max(entryMeters, 0.0)) return NO_SPAN_METERS;
+    return vec2(max(entryMeters, 0.0), exitMeters);
+  }
+
+  // How far along the ray, in metres, it enters and leaves the cake's
+  // bound, the union of the plate's and the stack's cylinders, each grown
+  // in radius and at both ends by the margin: the earlier entry to the
+  // later exit, or NO_SPAN_METERS where it misses both. A cylinder of zero
+  // radius, the plate's for a cake with none, is never grown, so it stays
+  // a miss.
+  vec2 boundSpan(vec3 direction, float marginMeters, vec3 origin) {
+    float plateMargin = plateBoundRadiusMeters > 0.0 ? marginMeters : 0.0;
+    float stackMargin = stackBoundRadiusMeters > 0.0 ? marginMeters : 0.0;
+    vec2 plate = cylinderSpan(
+      plateBoundBottomMeters - plateMargin,
+      direction,
+      origin,
+      plateBoundRadiusMeters + plateMargin,
+      plateBoundTopMeters + plateMargin
+    );
+    vec2 stack = cylinderSpan(
+      stackBoundBottomMeters - stackMargin,
+      direction,
+      origin,
+      stackBoundRadiusMeters + stackMargin,
+      stackBoundTopMeters + stackMargin
+    );
+    if (plate.y < 0.0) return stack;
+    if (stack.y < 0.0) return plate;
+    return vec2(min(plate.x, stack.x), max(plate.y, stack.y));
+  }
+
   // The share of a light that reaches p, from 0.0 in full shadow to 1.0 in
   // none, by marching towards the light: iq's soft shadow,
-  // https://iquilezles.org/articles/rmshadows/.
+  // https://iquilezles.org/articles/rmshadows/. It ends where its ray
+  // leaves the bound grown by SHADOW_BOUND_MARGIN_METERS, past which
+  // nothing can lower the share, or at SHADOW_MAX_DISTANCE_METERS.
   float lightShareAt(vec3 p, vec3 directionToLight) {
+    float endMeters = min(
+      boundSpan(directionToLight, SHADOW_BOUND_MARGIN_METERS, p).y,
+      SHADOW_MAX_DISTANCE_METERS
+    );
     float share = 1.0;
     float t = SHADOW_START_METERS;
     for (int i = 0; i < MAX_SHADOW_STEPS; i++) {
@@ -75,14 +191,19 @@ export const raymarchFragmentShader = /* glsl */ `
       if (d < SURFACE_EPSILON_METERS) return 0.0;
       share = min(share, SHADOW_SOFTNESS * d / t);
       t += d;
-      if (t > SHADOW_MAX_DISTANCE_METERS) break;
+      if (t > endMeters) break;
     }
     return share;
   }
 
   // Marches the ray from the start distance until it hits the cake, runs
-  // out of steps or goes too far.
-  Hit march(vec3 origin, vec3 direction, float startMeters) {
+  // out of steps or passes the end distance, where it leaves the bound.
+  Hit march(
+    vec3 origin,
+    vec3 direction,
+    float startMeters,
+    float endMeters
+  ) {
     Hit hit = Hit(startMeters, 0.0, false);
     for (int i = 0; i < MAX_MARCH_STEPS; i++) {
       vec2 field = cakeField(origin + direction * hit.distanceMeters);
@@ -92,7 +213,7 @@ export const raymarchFragmentShader = /* glsl */ `
         break;
       }
       hit.distanceMeters += field.x;
-      if (hit.distanceMeters > MAX_MARCH_DISTANCE_METERS) break;
+      if (hit.distanceMeters > endMeters) break;
     }
     return hit;
   }
@@ -119,36 +240,15 @@ export const raymarchFragmentShader = /* glsl */ `
     return normalize((cameraWorldMatrix * vec4(directionView, 0.0)).xyz);
   }
 
-  // How far along the ray it enters the sphere of the radius about the
-  // centre: 0.0 where it starts inside, or -1.0 where it misses.
-  float sphereEntry(
-    vec3 center,
-    vec3 direction,
-    vec3 origin,
-    float radius
-  ) {
-    vec3 fromCenter = origin - center;
-    float b = dot(fromCenter, direction);
-    float c = dot(fromCenter, fromCenter) - radius * radius;
-    float h = b * b - c;
-    if (h < 0.0) return -1.0;
-    return max(-b - sqrt(h), 0.0);
-  }
-
   void main() {
     vec3 rayOrigin = cameraPosition;
     vec3 rayDirection = rayDirectionAt(vNdc);
 
-    // A ray that misses the cake's bounding sphere, on the Y axis, never
-    // marches.
-    float entryMeters = sphereEntry(
-      vec3(0.0, boundCenterYMeters, 0.0),
-      rayDirection,
-      rayOrigin,
-      boundRadiusMeters
-    );
-    if (entryMeters < 0.0) discard;
-    Hit hit = march(rayOrigin, rayDirection, entryMeters);
+    // A ray that misses the cake's bound never marches, and one that meets
+    // it marches only from its entry to just past its exit.
+    vec2 spanMeters = boundSpan(rayDirection, 0.0, rayOrigin);
+    if (spanMeters.y < 0.0) discard;
+    Hit hit = march(rayOrigin, rayDirection, spanMeters.x, spanMeters.y);
     if (!hit.isHit) discard;
 
     vec3 hitPoint = rayOrigin + rayDirection * hit.distanceMeters;

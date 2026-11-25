@@ -48,8 +48,12 @@ const IDLE_TURN_RADIANS_PER_SECOND = MathUtils.degToRad(12);
 // guesses, to tune by eye.
 const MAX_CAMERA_DISTANCE_METERS = 1.2;
 const MIN_CAMERA_DISTANCE_METERS = 0.15;
-// Caps GPU cost on high-density screens: the shader runs once per pixel.
-const MAX_PIXEL_RATIO = 2;
+// Caps GPU cost on high-density screens: the shader runs once per pixel,
+// so the canvas draws one device pixel per CSS pixel and the browser
+// scales it up. At 2, the Black Forest took 24.0 ms a frame on the M4; at
+// 1, it holds the display's 16.7 ms, at the cost of slight steps along the
+// silhouette and the cut's edges on a Retina screen.
+const MAX_PIXEL_RATIO = 1;
 
 // The tilt stops where the view looks straight down or straight up the
 // cake's vertical axis. Past either limit, a drag right would carry the

@@ -7,6 +7,10 @@ import { LAYER_SLOTS } from "../cake/slots.js";
  *   iq's sdCappedCone with opRound, exact. A slot of zero height is
  *   skipped.
  * - The arrays hold one entry per slot, lengths in metres.
+ * - Every function takes the point in the plane of revolution, q, its
+ *   distance from the Y axis and its height, in metres.
+ * - layerBoundDistance() is a cheap lower bound on a slot's distance, so
+ *   layersField() can skip a slot that cannot be the nearest part.
  * - layersField() returns the distance in metres, negative inside a layer,
  *   and the nearest layer's material id, its slot, 0 to `LAYER_SLOTS` − 1.
  */
@@ -21,23 +25,49 @@ export const layersChunk = /* glsl */ `
 
   const int LAYER_SLOTS = ${LAYER_SLOTS};
 
-  // The field of the stack at p: x is the distance in metres to the nearest
-  // layer, negative inside it, and y that layer's slot as its material id.
-  vec2 layersField(vec3 p) {
-    vec2 field = vec2(NO_SURFACE_METERS, 0.0);
+  // A lower bound on the distance to the slot's layer, in metres: the
+  // greater of its slab's distance and its cylinder's, at the wider of its
+  // two radii. The rounded cone lies wholly inside both, so the bound
+  // never exceeds the layer's own distance, inside it or out.
+  float layerBoundDistance(vec2 q, int slot) {
+    float halfHeight = 0.5 * layerHeightsMeters[slot];
+    float center = layerBottomsMeters[slot] + halfHeight;
+    return max(
+      abs(q.y - center) - halfHeight,
+      q.x - max(layerBottomRadiiMeters[slot], layerTopRadiiMeters[slot])
+    );
+  }
+
+  // The distance to the slot's layer, in metres, negative inside it. The
+  // slot may be computed, not only a loop's index: GLSL ES 3.00 allows any
+  // integer index into a uniform array that holds no samplers (its issue
+  // 12.30), and leaves only an index outside 0 to LAYER_SLOTS - 1 undefined
+  // (its section 4.1.9), which no caller passes.
+  float layerDistance(vec2 q, int slot) {
+    float halfHeight = 0.5 * layerHeightsMeters[slot];
+    return roundedCappedConeDistance(
+      q - vec2(0.0, layerBottomsMeters[slot] + halfHeight),
+      layerBottomRadiiMeters[slot],
+      halfHeight,
+      layerRoundingsMeters[slot],
+      layerTopRadiiMeters[slot]
+    );
+  }
+
+  // The field of the stack at q, carried on from the stack's field so far:
+  // x is the distance in metres to the nearest layer, negative inside it,
+  // and y that layer's slot as its material id. It walks the slots in
+  // order, leaving out the skipped slot, already in the stack, and any
+  // slot whose bound is no nearer than the nearest distance so far, of
+  // any part, which then cannot lower the cake's least distance.
+  vec2 layersField(vec2 q, float nearest, int skippedSlot, vec2 stack) {
     for (int slot = 0; slot < LAYER_SLOTS; slot++) {
-      float height = layerHeightsMeters[slot];
-      if (height <= 0.0) continue;
-      float halfHeight = 0.5 * height;
-      float layer = roundedCappedConeDistance(
-        p - vec3(0.0, layerBottomsMeters[slot] + halfHeight, 0.0),
-        layerBottomRadiiMeters[slot],
-        halfHeight,
-        layerRoundingsMeters[slot],
-        layerTopRadiiMeters[slot]
-      );
-      if (layer < field.x) field = vec2(layer, float(slot));
+      if (slot == skippedSlot || layerHeightsMeters[slot] <= 0.0) continue;
+      if (layerBoundDistance(q, slot) >= nearest) continue;
+      float layer = layerDistance(q, slot);
+      if (layer < stack.x) stack = vec2(layer, float(slot));
+      nearest = min(nearest, layer);
     }
-    return field;
+    return stack;
   }
 `;

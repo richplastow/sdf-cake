@@ -2,9 +2,8 @@
  * @fileoverview
  * GLSL distance functions and operators, as a chunk the cake's field needs
  * pasted before it. Every function takes the sampled point first, as the
- * articles it follows do, then its other arguments A-Z. Each returns a
- * distance in metres that never overestimates the true one, but for
- * revolvedPoint(), which maps a point into the plane of a revolved profile.
+ * articles it follows do, then its other arguments A-Z, and returns a
+ * distance in metres that never overestimates the true one.
  */
 
 /** #### The GLSL chunk of distance primitives and operators
@@ -31,14 +30,15 @@ export const primitivesChunk = /* glsl */ `
 
   // The distance to a cone on the Y axis with its tip cut off, centred on
   // the origin, of the given bottom and top radii and half height: iq's
-  // sdCappedCone, exact, with its divisor guarded.
+  // sdCappedCone, exact, with its divisor guarded. It takes the point in
+  // the plane of revolution, q, its distance from the Y axis and its
+  // height, which the caller works out once for every part it samples.
   float cappedConeDistance(
-    vec3 p,
+    vec2 q,
     float bottomRadius,
     float halfHeight,
     float topRadius
   ) {
-    vec2 q = vec2(length(p.xz), p.y);
     vec2 k1 = vec2(topRadius, halfHeight);
     vec2 k2 = vec2(topRadius - bottomRadius, 2.0 * halfHeight);
     vec2 ca = vec2(
@@ -59,25 +59,18 @@ export const primitivesChunk = /* glsl */ `
     return min(max(d.x, d.y), 0.0) + length(max(d, 0.0));
   }
 
-  // The point's distance from the Y axis and its height, the plane in which
-  // a profile revolved about that axis is drawn: iq's opRevolution, with
-  // o = 0.
-  vec2 revolvedPoint(vec3 p) {
-    return vec2(length(p.xz), p.y);
-  }
-
   // The capped cone with its edges rounded off by the rounding, which keeps
   // its height, and its radii where its side is upright: iq's opRound on a
-  // smaller capped cone, exact.
+  // smaller capped cone, exact. It takes q, as cappedConeDistance() does.
   float roundedCappedConeDistance(
-    vec3 p,
+    vec2 q,
     float bottomRadius,
     float halfHeight,
     float rounding,
     float topRadius
   ) {
     return cappedConeDistance(
-      p,
+      q,
       bottomRadius - rounding,
       halfHeight - rounding,
       topRadius - rounding
@@ -123,10 +116,11 @@ export const primitivesChunk = /* glsl */ `
   // https://iquilezles.org/articles/distfunctions2d/, with no radius to
   // cut it, exact. Behind the apex it is the distance to the Y axis, so a
   // wedge however thin never stops a ray short of it, as a max of two
-  // half-spaces would.
-  float wedgeDistance(vec3 p, float halfAngle) {
+  // half-spaces would. The extrusion ignores height, so it takes the
+  // point's x and z alone, as xz.
+  float wedgeDistance(vec2 xz, float halfAngle) {
     // The point in sdPie's plane, folded onto one side of the wedge's axis.
-    vec2 q = vec2(abs(p.z), p.x);
+    vec2 q = vec2(abs(xz.y), xz.x);
     vec2 c = vec2(sin(halfAngle), cos(halfAngle));
     float m = length(q - c * max(dot(q, c), 0.0));
     return m * sign(c.y * q.x - c.x * q.y);

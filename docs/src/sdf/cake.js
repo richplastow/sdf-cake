@@ -25,9 +25,16 @@ export const cakeChunk = /* glsl */ `
   ${plateChunk}
   ${layersChunk}
 
-  uniform float boundCenterYMeters;
-  uniform float boundRadiusMeters;
   uniform float eatenAngleRadians;
+  // The two cylinders on the Y axis that bound the cake, the plate's and
+  // the stack's, from bottom to top, in metres. A cylinder of zero radius
+  // holds nothing, as the plate's does for a cake with none.
+  uniform float plateBoundBottomMeters;
+  uniform float plateBoundRadiusMeters;
+  uniform float plateBoundTopMeters;
+  uniform float stackBoundBottomMeters;
+  uniform float stackBoundRadiusMeters;
+  uniform float stackBoundTopMeters;
 
   const float LAYER_METALNESS = 0.0; // no layer is a metal
 
@@ -49,18 +56,54 @@ export const cakeChunk = /* glsl */ `
     if (eatenAngleRadians <= 0.0) return stack;
     float halfAngle = 0.5 * eatenAngleRadians;
     if (halfAngle <= PI_HALF) {
-      return subtractDistance(wedgeDistance(p, halfAngle), stack);
+      return subtractDistance(wedgeDistance(p.xz, halfAngle), stack);
     }
-    return max(wedgeDistance(vec3(-p.x, p.y, p.z), PI - halfAngle), stack);
+    return max(wedgeDistance(vec2(-p.x, p.z), PI - halfAngle), stack);
   }
 
   // The field at p: x is the distance to the cake in metres, negative
   // inside it, and y the id of the material at its nearest surface. The
   // slice is cut from the stack alone, never from the plate.
+  //
+  // Every part is a solid of revolution about the Y axis, so the parts take
+  // p in their plane of revolution, q: iq's opRevolution, with o = 0,
+  // https://iquilezles.org/articles/distfunctions/.
+  //
+  // The part whose bound is least is evaluated first, then the layers in
+  // slot order, each skipped where its bound is no nearer than the nearest
+  // distance so far, then the plate, unless it went first, skipped where
+  // its bound is no nearer than the cut stack's distance. A part whose
+  // bound is no nearer cannot be nearer, so the field's value is that of
+  // every part evaluated, and needs no step factor. The plate's gate reads
+  // the stack's distance after the cut, never before it: the cut only
+  // raises the stack's distance, so a point in the cut, inside an uncut
+  // layer, would skip the plate beneath it.
   vec2 cakeField(vec3 p) {
-    vec2 stack = layersField(p);
+    vec2 q = vec2(length(p.xz), p.y);
+
+    // The part whose bound is least: a layer's slot, or -1 for the plate.
+    float plateBound = plateBoundDistance(q);
+    float leastBound = plateBound;
+    int firstSlot = -1;
+    for (int slot = 0; slot < LAYER_SLOTS; slot++) {
+      if (layerHeightsMeters[slot] <= 0.0) continue;
+      float bound = layerBoundDistance(q, slot);
+      if (bound < leastBound) {
+        leastBound = bound;
+        firstSlot = slot;
+      }
+    }
+
+    vec2 plate = vec2(NO_SURFACE_METERS, MATERIAL_PLATE);
+    vec2 stack = vec2(NO_SURFACE_METERS, 0.0);
+    if (firstSlot < 0) {
+      plate = plateField(q);
+    } else {
+      stack = vec2(layerDistance(q, firstSlot), float(firstSlot));
+    }
+    stack = layersField(q, min(plate.x, stack.x), firstSlot, stack);
     stack.x = eatenStackDistance(p, stack.x);
-    vec2 plate = plateField(p);
+    if (firstSlot >= 0 && plateBound < stack.x) plate = plateField(q);
     return plate.x < stack.x ? plate : stack;
   }
 
@@ -81,13 +124,11 @@ export const cakeChunk = /* glsl */ `
  *   radians, and colours as Color, which Three.js uploads in linear space.
  * - The layers' numbers are Float32Arrays and their colours an array of
  *   Color, `LAYER_SLOTS` entries each, made once and written in place.
- * - Every value starts at zero, which draws nothing, as the bound's radius
- *   is 0: writeCakeUniforms() fills them.
+ * - Every value starts at zero, which draws nothing, as both bounding
+ *   cylinders' radii are 0: writeCakeUniforms() fills them.
  * @returns The uniforms, keyed by the names the chunks declare.
  */
 export const createCakeUniforms = () => ({
-  boundCenterYMeters: { value: 0 },
-  boundRadiusMeters: { value: 0 },
   eatenAngleRadians: { value: 0 },
   layerBottomRadiiMeters: { value: new Float32Array(LAYER_SLOTS) },
   layerBottomsMeters: { value: new Float32Array(LAYER_SLOTS) },
@@ -99,6 +140,9 @@ export const createCakeUniforms = () => ({
   layerRoundingsMeters: { value: new Float32Array(LAYER_SLOTS) },
   layerTopRadiiMeters: { value: new Float32Array(LAYER_SLOTS) },
   plateBaseRadiusMeters: { value: 0 },
+  plateBoundBottomMeters: { value: 0 },
+  plateBoundRadiusMeters: { value: 0 },
+  plateBoundTopMeters: { value: 0 },
   plateColor: { value: new Color() },
   plateLipHeightMeters: { value: 0 },
   plateMetalness: { value: 0 },
@@ -106,6 +150,9 @@ export const createCakeUniforms = () => ({
   plateRoughness: { value: 0 },
   plateSweepHeightMeters: { value: 0 },
   plateThicknessMeters: { value: 0 },
+  stackBoundBottomMeters: { value: 0 },
+  stackBoundRadiusMeters: { value: 0 },
+  stackBoundTopMeters: { value: 0 },
 });
 
 /** #### Copies a resolved cake into the cake's uniforms, in place
@@ -121,10 +168,8 @@ export const createCakeUniforms = () => ({
  * @param values The resolved cake, as resolveRecipe() returns it.
  */
 export const writeCakeUniforms = (uniforms, values) => {
-  const { layers, plate } = values;
+  const { bounds, layers, plate } = values;
 
-  uniforms.boundCenterYMeters.value = values.boundCenterYMeters;
-  uniforms.boundRadiusMeters.value = values.boundRadiusMeters;
   uniforms.eatenAngleRadians.value = values.eatenAngleRadians;
 
   for (let slot = 0; slot < LAYER_SLOTS; slot++) {
@@ -146,4 +191,11 @@ export const writeCakeUniforms = (uniforms, values) => {
   uniforms.plateRoughness.value = plate.roughness;
   uniforms.plateSweepHeightMeters.value = plate.sweepHeightMeters;
   uniforms.plateThicknessMeters.value = plate.thicknessMeters;
+
+  uniforms.plateBoundBottomMeters.value = bounds.plate.bottomMeters;
+  uniforms.plateBoundRadiusMeters.value = bounds.plate.radiusMeters;
+  uniforms.plateBoundTopMeters.value = bounds.plate.topMeters;
+  uniforms.stackBoundBottomMeters.value = bounds.stack.bottomMeters;
+  uniforms.stackBoundRadiusMeters.value = bounds.stack.radiusMeters;
+  uniforms.stackBoundTopMeters.value = bounds.stack.topMeters;
 };

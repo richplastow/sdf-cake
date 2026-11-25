@@ -8,10 +8,10 @@
 import { MATERIALS } from "./materials.js";
 import { LAYER_SLOTS } from "./slots.js";
 
-// The margin beyond the cake's extent of the sphere that bounds it, which
-// also covers the plate's rounded edge and a lip that rises above a short
-// stack.
-const BOUND_MARGIN_METERS = 0.01;
+// The margin by which each bounding cylinder passes its part's extent, in
+// radius and at both ends: 2 mm, which covers the march's own slop and
+// nothing else.
+const BOUND_MARGIN_METERS = 0.002;
 const FULL_TURN_RADIANS = 2 * Math.PI;
 // The colour of a part a cake lacks, and of an unused layer slot: black, as
 // an sRGB `#rrggbb` string.
@@ -32,13 +32,17 @@ export const EATEN_MAX_RADIANS = FULL_TURN_RADIANS - SLIVER_RADIANS;
  *   `#000000`.
  * - The eaten angle is the least fraction of a full turn, in radians,
  *   clamped to `EATEN_MAX_RADIANS`.
- * - The bound is the sphere on the Y axis that holds the plate and the
- *   stack, plus `BOUND_MARGIN_METERS`: its centre half way between the
- *   plate's underside and the stack's top, in metres.
+ * - The bounds are two cylinders on the Y axis, `bounds.plate` and
+ *   `bounds.stack`, each its `bottomMeters`, `radiusMeters` and
+ *   `topMeters`, holding its part and grown by `BOUND_MARGIN_METERS`. The
+ *   plate's spans its underside to its lip's top, of radius its rim plus
+ *   half its thickness; the stack's spans the lowest layer's bottom to the
+ *   stack's top, of radius the widest of the layers' two radii. A part a
+ *   cake lacks has a cylinder of all zeros, with no margin.
  * - Colours stay sRGB `#rrggbb` strings, as the palette gives them.
  * @param recipe A recipe, as src/cake/recipes.js holds them.
- * @returns The resolved cake: `plate`, `layers`, `eatenAngleRadians`,
- *   `boundCenterYMeters` and `boundRadiusMeters`.
+ * @returns The resolved cake: `plate`, `layers`, `eatenAngleRadians` and
+ *   `bounds`.
  */
 export const resolveRecipe = (recipe) => {
   const plate = resolvePlate(recipe.plate);
@@ -70,18 +74,34 @@ export const resolveRecipe = (recipe) => {
     });
   }
 
-  // The bound's sphere spans the plate's underside, one plate thickness
-  // below the origin, to the stack's top, and the widest radius of either.
-  const undersideMeters = -plate.thicknessMeters;
-  const halfHeightMeters = 0.5 * (stackTopMeters - undersideMeters);
-  let widestRadiusMeters = plate.rimRadiusMeters;
+  // The plate's stroked profile reaches half its thickness past the rim,
+  // down to its underside, one thickness below the origin, and up to the
+  // lip's top, at the sweep's height plus the lip's.
+  const plateBound = boundingCylinder(
+    -plate.thicknessMeters,
+    plate.rimRadiusMeters > 0
+      ? plate.rimRadiusMeters + 0.5 * plate.thicknessMeters
+      : 0,
+    plate.sweepHeightMeters + plate.lipHeightMeters,
+  );
+
+  // The stack's spans its used layers, at the wider of each one's radii.
+  let stackBottomMeters = stackTopMeters;
+  let widestRadiusMeters = 0;
   for (const layer of layers) {
+    if (layer.heightMeters <= 0) continue;
+    stackBottomMeters = Math.min(stackBottomMeters, layer.bottomMeters);
     widestRadiusMeters = Math.max(
       widestRadiusMeters,
       layer.bottomRadiusMeters,
       layer.topRadiusMeters,
     );
   }
+  const stackBound = boundingCylinder(
+    stackBottomMeters,
+    widestRadiusMeters,
+    stackTopMeters,
+  );
 
   return {
     plate,
@@ -90,12 +110,7 @@ export const resolveRecipe = (recipe) => {
       recipe.eaten.minFraction * FULL_TURN_RADIANS,
       EATEN_MAX_RADIANS,
     ),
-    boundCenterYMeters: undersideMeters + halfHeightMeters,
-    boundRadiusMeters:
-      Math.sqrt(
-        widestRadiusMeters * widestRadiusMeters +
-          halfHeightMeters * halfHeightMeters,
-      ) + BOUND_MARGIN_METERS,
+    bounds: { plate: plateBound, stack: stackBound },
   };
 };
 
@@ -174,6 +189,28 @@ export const validateRecipe = (recipe) => {
   }
 
   return problems;
+};
+
+/** #### Gives the cylinder on the Y axis that bounds a part, with margin
+ * - Grows the part's extent by `BOUND_MARGIN_METERS` in radius and at both
+ *   ends.
+ * - A part of zero radius, which a cake lacks, gives a cylinder of all
+ *   zeros, with no margin, which the shader treats as a miss.
+ * @param bottomMeters The part's lowest height, in metres.
+ * @param radiusMeters The part's greatest distance from the Y axis, in
+ *   metres.
+ * @param topMeters The part's greatest height, in metres.
+ * @returns The cylinder's `bottomMeters`, `radiusMeters` and `topMeters`.
+ */
+const boundingCylinder = (bottomMeters, radiusMeters, topMeters) => {
+  if (radiusMeters <= 0) {
+    return { bottomMeters: 0, radiusMeters: 0, topMeters: 0 };
+  }
+  return {
+    bottomMeters: bottomMeters - BOUND_MARGIN_METERS,
+    radiusMeters: radiusMeters + BOUND_MARGIN_METERS,
+    topMeters: topMeters + BOUND_MARGIN_METERS,
+  };
 };
 
 /** Says whether a number lies within 0 and 1, both included. */
