@@ -46,6 +46,20 @@ export const MATERIALS = {
     holeStrength: 0,
     holeCellMeters: 0,
   },
+  darkGanache: {
+    color: "#24140b",
+    roughness: 0.25,
+    metalness: 0,
+    holeStrength: 0,
+    holeCellMeters: 0,
+  },
+  berryCoulis: {
+    color: "#6e0b1f",
+    roughness: 0.15,
+    metalness: 0,
+    holeStrength: 0,
+    holeCellMeters: 0,
+  },
   custard: {
     color: "#f4c842",
     roughness: 0.5,

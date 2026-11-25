@@ -12,7 +12,8 @@ import { LAYER_SLOTS } from "../cake/slots.js";
  * - layerBoundDistance() is a cheap lower bound on a slot's distance, so
  *   layersField() can skip a slot that cannot be the nearest part.
  * - layersField() returns the distance in metres, negative inside a layer,
- *   and the nearest layer's material id, its slot, 0 to `LAYER_SLOTS` − 1.
+ *   the nearest layer's material id, its slot, 0 to `LAYER_SLOTS` − 1, and
+ *   the smoothed stack's distance in metres, for the topping's coat.
  */
 export const layersChunk = /* glsl */ `
   uniform float layerBottomRadiiMeters[${LAYER_SLOTS}];
@@ -56,16 +57,26 @@ export const layersChunk = /* glsl */ `
 
   // The field of the stack at q, carried on from the stack's field so far:
   // x is the distance in metres to the nearest layer, negative inside it,
-  // and y that layer's slot as its material id. It walks the slots in
-  // order, leaving out the skipped slot, already in the stack, and any
-  // slot whose bound is no nearer than the nearest distance so far, of
-  // any part, which then cannot lower the cake's least distance.
-  vec2 layersField(vec2 q, float nearest, int skippedSlot, vec2 stack) {
+  // y that layer's slot as its material id, and z the smoothed stack's
+  // distance in metres, the layers joined by smoothMinDistance() with the
+  // blend, in metres, which the topping's coat follows. It walks the slots
+  // in order, leaving out the skipped slot, already in the stack, and any
+  // slot whose bound is the blend or more beyond the nearest distance so
+  // far, of any part: such a slot cannot lower the cake's least distance,
+  // and lies too far from the nearest layer to change the smoothed one.
+  vec3 layersField(
+    vec2 q,
+    float blend,
+    float nearest,
+    int skippedSlot,
+    vec3 stack
+  ) {
     for (int slot = 0; slot < LAYER_SLOTS; slot++) {
       if (slot == skippedSlot || layerHeightsMeters[slot] <= 0.0) continue;
-      if (layerBoundDistance(q, slot) >= nearest) continue;
+      if (layerBoundDistance(q, slot) >= nearest + blend) continue;
       float layer = layerDistance(q, slot);
-      if (layer < stack.x) stack = vec2(layer, float(slot));
+      if (layer < stack.x) stack.xy = vec2(layer, float(slot));
+      stack.z = smoothMinDistance(stack.z, layer, blend);
       nearest = min(nearest, layer);
     }
     return stack;

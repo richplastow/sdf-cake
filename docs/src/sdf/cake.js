@@ -1,29 +1,33 @@
 /**
  * @fileoverview
- * The cake's signed distance field, a plate under a stack of layers with
- * the eaten slice cut from the stack, as a GLSL chunk, the uniforms it
- * reads, and the writer that copies a resolved cake into them.
+ * The cake's signed distance field, a plate under a stack of layers and
+ * its topping, with the eaten slice cut from both, as a GLSL chunk, the
+ * uniforms it reads, and the writer that copies a resolved cake into them.
  */
 
 import { Color } from "three";
 import { LAYER_SLOTS } from "../cake/slots.js";
 import { layersChunk } from "./layers.js";
 import { plateChunk } from "./plate.js";
+import { toppingChunk } from "./topping.js";
 
 /** #### The GLSL chunk of the cake's field
  * - Needs the primitives chunk, src/sdf/primitives.js, and Three.js's
  *   `common` chunk, for `PI` and `PI_HALF`, pasted before it. It pastes the
- *   plate's and the layers' chunks itself.
+ *   plate's, the layers' and the topping's chunks itself.
  * - Reads the uniforms createCakeUniforms() declares, so a change to any
  *   of them reshapes or recolours the cake with no new shader.
  * - cakeField() returns the distance in metres, negative inside the cake,
  *   and the id of the material at the nearest surface: a layer's slot, 0
- *   to 6, or the plate's 7, which the other functions map to the
- *   surface's albedo, roughness and metalness.
+ *   to 6, the plate's 7 or the topping's 8, which the other functions map
+ *   to the surface's albedo, roughness and metalness.
+ * - cakeFieldOf() returns the same with or without the topping, so a ray
+ *   refracted into a translucent topping can march to the part beneath.
  */
 export const cakeChunk = /* glsl */ `
   ${plateChunk}
   ${layersChunk}
+  ${toppingChunk}
 
   uniform float eatenAngleRadians;
   // The two cylinders on the Y axis that bound the cake, the plate's and
@@ -37,11 +41,13 @@ export const cakeChunk = /* glsl */ `
   uniform float stackBoundTopMeters;
 
   const float LAYER_METALNESS = 0.0; // no layer is a metal
+  const float TOPPING_METALNESS = 0.0; // no topping is a metal
 
   vec3 cakeAlbedoOf(float materialId) {
     if (materialId < MATERIAL_PLATE - 0.5) {
       return layerColors[int(materialId + 0.5)];
     }
+    if (materialId > MATERIAL_TOPPING - 0.5) return toppingColor;
     return plateColor;
   }
 
@@ -63,7 +69,8 @@ export const cakeChunk = /* glsl */ `
 
   // The field at p: x is the distance to the cake in metres, negative
   // inside it, and y the id of the material at its nearest surface. The
-  // slice is cut from the stack alone, never from the plate.
+  // slice is cut from the stack and the topping together, never from the
+  // plate.
   //
   // Every part is a solid of revolution about the Y axis, so the parts take
   // p in their plane of revolution, q: iq's opRevolution, with o = 0,
@@ -78,7 +85,18 @@ export const cakeChunk = /* glsl */ `
   // the stack's distance after the cut, never before it: the cut only
   // raises the stack's distance, so a point in the cut, inside an uncut
   // layer, would skip the plate beneath it.
-  vec2 cakeField(vec3 p) {
+  //
+  // The topping's coat is the smoothed stack's distance less the
+  // thickness, so the walk counts the plate's distance as the thickness
+  // farther than it is, and skips a layer only where its bound lies the
+  // skirt's blend beyond that or beyond the nearest layer: a skipped layer
+  // then either lies too far to change the smoothed stack, or lies so far
+  // beyond the plate, less the quarter blend the smoothing can take off,
+  // that the plate stays the nearer part whatever the coat does. Then the
+  // topping is unioned with the stack before the cut, so the cut passes
+  // through both and the plate's gate reads both. Without the topping, the
+  // cut stack and the plate alone, as a translucent topping covers them.
+  vec2 cakeFieldOf(vec3 p, bool withTopping) {
     vec2 q = vec2(length(p.xz), p.y);
 
     // The part whose bound is least: a layer's slot, or -1 for the plate.
@@ -94,27 +112,51 @@ export const cakeChunk = /* glsl */ `
       }
     }
 
+    // The stack: x and y the nearest layer's distance and slot, z the
+    // smoothed stack's distance.
     vec2 plate = vec2(NO_SURFACE_METERS, MATERIAL_PLATE);
-    vec2 stack = vec2(NO_SURFACE_METERS, 0.0);
+    vec3 stack = vec3(NO_SURFACE_METERS, 0.0, NO_SURFACE_METERS);
     if (firstSlot < 0) {
       plate = plateField(q);
     } else {
-      stack = vec2(layerDistance(q, firstSlot), float(firstSlot));
+      float first = layerDistance(q, firstSlot);
+      stack = vec3(first, float(firstSlot), first);
     }
-    stack = layersField(q, min(plate.x, stack.x), firstSlot, stack);
-    stack.x = eatenStackDistance(p, stack.x);
-    if (firstSlot >= 0 && plateBound < stack.x) plate = plateField(q);
-    return plate.x < stack.x ? plate : stack;
+    stack = layersField(
+      q,
+      toppingSkirtBlend(),
+      min(plate.x + toppingThicknessMeters, stack.x),
+      firstSlot,
+      stack
+    );
+    vec2 cake = stack.xy;
+    if (withTopping) {
+      vec2 topping = toppingField(p, q, stack.z, stack.x);
+      if (topping.x < cake.x) cake = topping;
+    }
+    cake.x = eatenStackDistance(p, cake.x);
+    if (firstSlot >= 0 && plateBound < cake.x) plate = plateField(q);
+    return plate.x < cake.x ? plate : cake;
   }
 
+  // The field at p with the topping: cakeFieldOf()'s, as every march but
+  // the one beneath a translucent topping reads it.
+  vec2 cakeField(vec3 p) {
+    return cakeFieldOf(p, true);
+  }
+
+  // A layer and the topping are never metals; the plate may be.
   float cakeMetalnessOf(float materialId) {
-    return materialId < MATERIAL_PLATE - 0.5 ? LAYER_METALNESS : plateMetalness;
+    if (materialId < MATERIAL_PLATE - 0.5) return LAYER_METALNESS;
+    if (materialId > MATERIAL_TOPPING - 0.5) return TOPPING_METALNESS;
+    return plateMetalness;
   }
 
   float cakeRoughnessOf(float materialId) {
     if (materialId < MATERIAL_PLATE - 0.5) {
       return layerRoughnesses[int(materialId + 0.5)];
     }
+    if (materialId > MATERIAL_TOPPING - 0.5) return toppingRoughness;
     return plateRoughness;
   }
 `;
@@ -153,6 +195,17 @@ export const createCakeUniforms = () => ({
   stackBoundBottomMeters: { value: 0 },
   stackBoundRadiusMeters: { value: 0 },
   stackBoundTopMeters: { value: 0 },
+  toppingBaseMeters: { value: 0 },
+  toppingColor: { value: new Color() },
+  toppingCoverage: { value: 0 },
+  toppingDripMeters: { value: 0 },
+  toppingDripWaves: { value: 0 },
+  toppingPileMeters: { value: 0 },
+  toppingRadiusMeters: { value: 0 },
+  toppingRoughness: { value: 0 },
+  toppingRoundingMeters: { value: 0 },
+  toppingThicknessMeters: { value: 0 },
+  toppingTranslucency: { value: 0 },
 });
 
 /** #### Copies a resolved cake into the cake's uniforms, in place
@@ -168,7 +221,7 @@ export const createCakeUniforms = () => ({
  * @param values The resolved cake, as resolveRecipe() returns it.
  */
 export const writeCakeUniforms = (uniforms, values) => {
-  const { bounds, layers, plate } = values;
+  const { bounds, layers, plate, topping } = values;
 
   uniforms.eatenAngleRadians.value = values.eatenAngleRadians;
 
@@ -191,6 +244,18 @@ export const writeCakeUniforms = (uniforms, values) => {
   uniforms.plateRoughness.value = plate.roughness;
   uniforms.plateSweepHeightMeters.value = plate.sweepHeightMeters;
   uniforms.plateThicknessMeters.value = plate.thicknessMeters;
+
+  uniforms.toppingBaseMeters.value = topping.baseMeters;
+  uniforms.toppingColor.value.set(topping.color);
+  uniforms.toppingCoverage.value = topping.coverage;
+  uniforms.toppingDripMeters.value = topping.dripMeters;
+  uniforms.toppingDripWaves.value = topping.dripWaves;
+  uniforms.toppingPileMeters.value = topping.pileMeters;
+  uniforms.toppingRadiusMeters.value = topping.radiusMeters;
+  uniforms.toppingRoughness.value = topping.roughness;
+  uniforms.toppingRoundingMeters.value = topping.roundingMeters;
+  uniforms.toppingThicknessMeters.value = topping.thicknessMeters;
+  uniforms.toppingTranslucency.value = topping.translucency;
 
   uniforms.plateBoundBottomMeters.value = bounds.plate.bottomMeters;
   uniforms.plateBoundRadiusMeters.value = bounds.plate.radiusMeters;

@@ -9,7 +9,7 @@ type: plan
 - Delivers a frame budget with room in it: the Black Forest, the heaviest
   cake so far, at a steady 60 fps on the M4 MacBook with a canvas about
   1000 CSS px square, and headroom for the topping, the decorations and
-  the crumb that [Plan 04](../todo/04-topping.md),
+  the crumb that [Plan 04](./04-topping.md),
   [Plan 06](../todo/06-decorations.md) and
   [Plan 08](../todo/08-crumb.md) add to the same field.
 - Measured at [Plan 02](./02-plate-and-layers.md)'s Manual QA
@@ -32,7 +32,7 @@ type: plan
   [intersectors](https://iquilezles.org/articles/intersectors/) give the
   exact ray-cylinder span.
 - Depends on [Plan 02](./02-plate-and-layers.md); feeds
-  [Plan 04](../todo/04-topping.md) and every plan after, each of which adds its
+  [Plan 04](./04-topping.md) and every plan after, each of which adds its
   parts to the field this plan makes cheaper, and
   [Plan 05](../todo/05-transitions.md), whose camera fit reads the bound this
   plan reshapes.
@@ -125,7 +125,7 @@ type: plan
      what it would.
    - **Consequence for later plans:** each part they add takes the same
      bound and joins the same order; a part cut with the stack, as
-     [Plan 04](../todo/04-topping.md)'s topping is, joins the walk before the
+     [Plan 04](./04-topping.md)'s topping is, joins the walk before the
      cut, so the plate's gate reads it too. Plan 08's irregularity
      displaces a layer by up to its amplitude, so that plan widens
      `layerBoundDistance()` by the slot's amplitude; its holes only add

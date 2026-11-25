@@ -18,7 +18,7 @@ type: plan
   [Damped Springs](https://www.ryanjuckett.com/damped-springs/), and
   ports `distanceToFitSphere()` from pureland-simulator's
   `docs/src/camera/fit.js`.
-- Depends on [Plan 04](04-topping.md); feeds
+- Depends on [Plan 04](../done/04-topping.md); feeds
   [Plan 06](06-decorations.md), which adds the decorations' sink and fall
   to the choreography, and [Plan 07](07-sliders.md), which puts the
   eaten slider between the arrow buttons.

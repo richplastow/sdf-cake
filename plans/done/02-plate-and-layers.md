@@ -10,14 +10,14 @@ type: plan
   four parts in the field: the plate and the seven layer slots, stacked
   from the plate's top, with the slice cut from the stack and never the
   plate. The topping is not drawn until
-  [Plan 04](../todo/04-topping.md), so each cake shows bare for now.
+  [Plan 04](./04-topping.md), so each cake shows bare for now.
 - Implements sections 1 and 2 of
   [the research's architecture](../todo/01-presentation-mode-research.md#the-architecture),
   under [ADR 001](../../adr/001-sdf-raymarching-with-three.md). The
   primitives follow Inigo Quilez's
   [distance functions](https://iquilezles.org/articles/distfunctions/)
   and [2D distance functions](https://iquilezles.org/articles/distfunctions2d/).
-- Depends on nothing; feeds [Plan 04](../todo/04-topping.md) and every plan after.
+- Depends on nothing; feeds [Plan 04](./04-topping.md) and every plan after.
 - Needed because the proof of concept's field is one cylinder with seven
   uniforms, and the brief wants a loop of cakes that share one shape.
 
@@ -132,7 +132,7 @@ type: plan
 5. **The six cakes**, in walk order, first guesses to tune by eye. Layers
    run from the bottom; a radius pair is bottom then top where they
    differ. The toppings and decorations are listed in
-   [Plan 04](../todo/04-topping.md#decisions) and
+   [Plan 04](./04-topping.md#decisions) and
    [Plan 06](../todo/06-decorations.md#decisions):
 
    | Id | Plate | Layers (material, height, radius) | Eaten steps, min, max |
@@ -313,7 +313,7 @@ Adds `docs/src/cake/materials.js`, `docs/src/cake/recipes.js`,
 `docs/src/cake/resolve.js`, `docs/src/cake/select.js` and
 `docs/src/cake/slots.js`, per Decisions 1 to 7, 11 and 14. Each recipe
 is complete: its plate and layers from Decision 5, its `topping` from
-[Plan 04's Decision 2](../todo/04-topping.md#decisions) (`null` for the
+[Plan 04's Decision 2](./04-topping.md#decisions) (`null` for the
 cheesecake), its `decorations` from
 [Plan 06's Decision 3](../todo/06-decorations.md#decisions) (`[]` for the
 Victoria sponge and the cheesecake), and each layer's

@@ -13,9 +13,20 @@ import { LAYER_SLOTS } from "./slots.js";
 // nothing else.
 const BOUND_MARGIN_METERS = 0.002;
 const FULL_TURN_RADIANS = 2 * Math.PI;
+// The greatest drip term a recipe may hold, unitless: the slope of the
+// drips' cut-off round the cake, half the drip amplitude times the waves
+// over the least radius a drip can end on. src/sdf/topping.js scales the
+// term by its DRIP_STEP_FACTOR, 0.45, which keeps the field from
+// overestimating for a slope up to 1.98; 1.9 leaves a margin.
+const MAX_DRIP_TERM = 1.9;
 // The colour of a part a cake lacks, and of an unused layer slot: black, as
 // an sRGB `#rrggbb` string.
 const NO_PART_COLOR = "#000000";
+// How far the coat's smoothing can push the skirt past the widest layer
+// grown by the thickness, as a fraction of the thickness, unitless: the
+// smooth minimum reads up to a quarter of its blend less, and
+// src/sdf/topping.js sets that blend to the thickness.
+const SKIRT_BULGE_PER_THICKNESS = 0.25;
 // The least a cut leaves of the cake: one degree, so the most eaten cake is
 // a sliver, never a sheet of zero width that a march could hit.
 const SLIVER_RADIANS = Math.PI / 180;
@@ -39,10 +50,18 @@ export const EATEN_MAX_RADIANS = FULL_TURN_RADIANS - SLIVER_RADIANS;
  *   half its thickness; the stack's spans the lowest layer's bottom to the
  *   stack's top, of radius the widest of the layers' two radii. A part a
  *   cake lacks has a cylinder of all zeros, with no margin.
+ * - The topping's base is the highest top of any used layer, and its
+ *   `radiusMeters`, the crown radius, is that layer's top radius. A `null`
+ *   topping, or a cake with no layers, resolves to a topping of all zeros,
+ *   coloured `#000000`.
+ * - The stack's cylinder grows by the topping's thickness, and the most its
+ *   smoothing can push the coat further out, in radius, and by its
+ *   thickness plus its pile at the top.
+ * - The topping's `translucency`, 0 to 1, defaults to 0, opaque.
  * - Colours stay sRGB `#rrggbb` strings, as the palette gives them.
  * @param recipe A recipe, as src/cake/recipes.js holds them.
- * @returns The resolved cake: `plate`, `layers`, `eatenAngleRadians` and
- *   `bounds`.
+ * @returns The resolved cake: `plate`, `layers`, `topping`,
+ *   `eatenAngleRadians` and `bounds`.
  */
 export const resolveRecipe = (recipe) => {
   const plate = resolvePlate(recipe.plate);
@@ -86,8 +105,10 @@ export const resolveRecipe = (recipe) => {
   );
 
   // The stack's spans its used layers, at the wider of each one's radii.
+  // The crown is the used layer with the highest top.
   let stackBottomMeters = stackTopMeters;
   let widestRadiusMeters = 0;
+  let crown = null;
   for (const layer of layers) {
     if (layer.heightMeters <= 0) continue;
     stackBottomMeters = Math.min(stackBottomMeters, layer.bottomMeters);
@@ -96,16 +117,31 @@ export const resolveRecipe = (recipe) => {
       layer.bottomRadiusMeters,
       layer.topRadiusMeters,
     );
+    if (
+      !crown ||
+      layer.bottomMeters + layer.heightMeters >
+        crown.bottomMeters + crown.heightMeters
+    ) {
+      crown = layer;
+    }
   }
+
+  const topping = resolveTopping(recipe.topping, crown);
+
+  // The skirt and the full cap pass the widest layer by at most the
+  // thickness and the smoothing's bulge, and the pile rises above the cap's
+  // top.
   const stackBound = boundingCylinder(
     stackBottomMeters,
-    widestRadiusMeters,
-    stackTopMeters,
+    widestRadiusMeters +
+      (1 + SKIRT_BULGE_PER_THICKNESS) * topping.thicknessMeters,
+    stackTopMeters + topping.thicknessMeters + topping.pileMeters,
   );
 
   return {
     plate,
     layers,
+    topping,
     eatenAngleRadians: Math.min(
       recipe.eaten.minFraction * FULL_TURN_RADIANS,
       EATEN_MAX_RADIANS,
@@ -122,6 +158,11 @@ export const resolveRecipe = (recipe) => {
  *   most the least of its radii and half its height.
  * - Every material it names, the plate's, the topping's and each layer's,
  *   is in the palette.
+ * - The topping's `translucency`, where given, lies within 0 and 1.
+ * - The topping's `dripWaves` is a whole number, and its drip term, half
+ *   its `dripMeters` times its waves over the least radius a drip can end
+ *   on, any layer's either radius less its rounding, is at most
+ *   `MAX_DRIP_TERM`.
  * - `eaten.steps` is at least 1; `eaten.minFraction` is at most
  *   `eaten.maxFraction`, both within 0 and 1, and the two are equal when
  *   there is one step.
@@ -172,6 +213,29 @@ export const validateRecipe = (recipe) => {
   for (const name of materialNames) {
     if (!Object.hasOwn(MATERIALS, name)) {
       problems.push(`The material "${name}" is not in the palette.`);
+    }
+  }
+
+  if (topping) {
+    if (!isFraction(topping.translucency ?? 0)) {
+      problems.push("The topping's translucency lies outside 0 to 1.");
+    }
+    if (!Number.isInteger(topping.dripWaves)) {
+      problems.push("The topping's drip waves are not a whole number.");
+    }
+    const leastRadiusMeters = Math.min(
+      ...layers.flatMap((layer) => [
+        layer.bottomRadiusMeters - layer.roundingMeters,
+        layer.topRadiusMeters - layer.roundingMeters,
+      ]),
+    );
+    const dripTerm =
+      (0.5 * topping.dripMeters * topping.dripWaves) / leastRadiusMeters;
+    if (dripTerm > MAX_DRIP_TERM) {
+      problems.push(
+        `The topping's drip term, ${dripTerm.toFixed(2)}, passes ` +
+          `${MAX_DRIP_TERM}.`,
+      );
     }
   }
 
@@ -244,5 +308,45 @@ const resolvePlate = (plate) => {
     color: material.color,
     roughness: material.roughness,
     metalness: material.metalness,
+  };
+};
+
+/** #### Resolves a recipe's topping, or its lack of one, to plain numbers
+ * @param topping The recipe's topping, or `null` for none.
+ * @param crown The resolved layer with the highest top, or `null` for a
+ *   cake with no layers, which has nothing to coat.
+ * @returns The topping's base and crown radius, its coverage, lengths in
+ *   metres, wave count, colour, roughness and translucency; all zeros,
+ *   coloured `#000000`, for no topping.
+ */
+const resolveTopping = (topping, crown) => {
+  if (!topping || !crown) {
+    return {
+      baseMeters: 0,
+      radiusMeters: 0,
+      coverage: 0,
+      thicknessMeters: 0,
+      roundingMeters: 0,
+      pileMeters: 0,
+      dripMeters: 0,
+      dripWaves: 0,
+      color: NO_PART_COLOR,
+      roughness: 0,
+      translucency: 0,
+    };
+  }
+  const material = MATERIALS[topping.material];
+  return {
+    baseMeters: crown.bottomMeters + crown.heightMeters,
+    radiusMeters: crown.topRadiusMeters,
+    coverage: topping.coverage,
+    thicknessMeters: topping.thicknessMeters,
+    roundingMeters: topping.roundingMeters,
+    pileMeters: topping.pileMeters,
+    dripMeters: topping.dripMeters,
+    dripWaves: topping.dripWaves,
+    color: material.color,
+    roughness: material.roughness,
+    translucency: topping.translucency ?? 0,
   };
 };

@@ -92,6 +92,18 @@ export const primitivesChunk = /* glsl */ `
     ) - rounding;
   }
 
+  // The union of two distances, a and b, with the crease where they meet
+  // filled by a fillet the blend wide, in metres: iq's quadratic polynomial
+  // smooth minimum, https://iquilezles.org/articles/smin/. It differs from
+  // min() only where the two lie within the blend of each other, and there
+  // reads up to a quarter of the blend less. Its gradient is a weighted
+  // mean of the two inputs', so it is a bound and needs no step factor. The
+  // blend must be above 0.
+  float smoothMinDistance(float a, float b, float blend) {
+    float h = max(blend - abs(a - b), 0.0) / blend;
+    return min(a, b) - 0.25 * blend * h * h;
+  }
+
   // The distance to a segment between two points in 2D: iq's sdSegment,
   // exact, with its divisor guarded.
   float segmentDistance(vec2 p, vec2 a, vec2 b) {

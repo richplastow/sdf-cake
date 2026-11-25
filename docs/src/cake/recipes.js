@@ -13,6 +13,9 @@
  *   elsewhere, such as sprinkles.
  * - `eaten.minFraction` and `eaten.maxFraction` are fractions of a full
  *   turn.
+ * - A topping's optional `translucency`, 0 to 1, lets the part beneath
+ *   show through it, refracted and tinted by the topping's colour: 0 is
+ *   opaque, and 1 clear; left out, it is 0.
  * - `topping`, `decorations`, and each layer's `irregularityMeters` and
  *   `inclusions`, are held for the topping, the decorations and the crumb
  *   to read, so the shape is complete before any of them is drawn.
@@ -90,7 +93,7 @@ export const RECIPES = [
         inclusions: { chocolateChips: 60, nuts: 0, raisins: 0 },
       },
       {
-        material: "ganache",
+        material: "darkGanache",
         heightMeters: 0.004,
         bottomRadiusMeters: 0.083,
         topRadiusMeters: 0.083,
@@ -108,7 +111,7 @@ export const RECIPES = [
         inclusions: { chocolateChips: 60, nuts: 0, raisins: 0 },
       },
       {
-        material: "ganache",
+        material: "darkGanache",
         heightMeters: 0.004,
         bottomRadiusMeters: 0.083,
         topRadiusMeters: 0.083,
@@ -171,7 +174,16 @@ export const RECIPES = [
         inclusions: { chocolateChips: 0, nuts: 0, raisins: 0 },
       },
     ],
-    topping: null,
+    topping: {
+      material: "berryCoulis",
+      coverage: 0.6,
+      thicknessMeters: 0.0015,
+      roundingMeters: 0.00075,
+      pileMeters: 0.003,
+      dripMeters: 0.02,
+      dripWaves: 9,
+      translucency: 0.7,
+    },
     decorations: [],
     eaten: { steps: 200, minFraction: 0, maxFraction: 1 },
   },
@@ -285,7 +297,7 @@ export const RECIPES = [
     },
     decorations: [
       { kind: "cherry", count: 8, color: "#b3121f" },
-      { kind: "flake", count: 120, color: "#3b2314" },
+      { kind: "flake", count: 120, color: "#24140b" },
     ],
     eaten: { steps: 7, minFraction: 0.1, maxFraction: 0.9 },
   },

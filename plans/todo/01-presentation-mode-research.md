@@ -576,7 +576,7 @@ accepted and the next rejected.
    cap, a cheap bound per part, and marches that end where nothing is left
    to hit, so the heaviest cake holds 60 fps with room for the parts to
    come. Visible proof: the same cakes as Plan 02, at a steady frame time.
-3. [Plan 04, The topping](04-topping.md): the cap, the pile, the skirt
+3. [Plan 04, The topping](../done/04-topping.md): the cap, the pile, the skirt
    and the drips driven by the coverage, with the topping's materials.
    Visible proof: a pink Victoria sponge again, piled cream on the custard
    pie, drips down the chocolate cake, and a bare cheesecake.
