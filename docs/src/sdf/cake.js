@@ -1,12 +1,14 @@
 /**
  * @fileoverview
- * The cake's signed distance field, a plate under a stack of layers and
- * its topping, with the eaten slice cut from both, as a GLSL chunk, the
+ * The cake's signed distance field, a plate under a stack of layers, its
+ * topping and its decorations, with the eaten slice cut from all but the
+ * plate, as a GLSL chunk, the
  * uniforms it reads, and the writer that copies a resolved cake into them.
  */
 
 import { Color, SRGBColorSpace } from "three";
-import { LAYER_SLOTS } from "../cake/slots.js";
+import { DECORATION_SLOTS, LAYER_SLOTS } from "../cake/slots.js";
+import { decorationsChunk } from "./decorations.js";
 import { layersChunk } from "./layers.js";
 import { plateChunk } from "./plate.js";
 import { toppingChunk } from "./topping.js";
@@ -14,15 +16,19 @@ import { toppingChunk } from "./topping.js";
 /** #### The GLSL chunk of the cake's field
  * - Needs the primitives chunk, src/sdf/primitives.js, and Three.js's
  *   `common` chunk, for `PI` and `PI_HALF`, pasted before it. It pastes the
- *   plate's, the layers' and the topping's chunks itself.
+ *   plate's, the layers', the topping's and the decorations' chunks
+ *   itself.
  * - Reads the uniforms createCakeUniforms() declares, so a change to any
  *   of them reshapes or recolours the cake with no new shader.
  * - cakeField() returns the distance in metres, negative inside the cake,
  *   and the id of the material at the nearest surface: a layer's slot, 0
- *   to 6, the plate's 7 or the topping's 8, which the other functions map
- *   to the surface's albedo, roughness and metalness.
+ *   to 6, the plate's 7, the topping's 8 or a decoration's, 16 and up,
+ *   which the other functions map to the surface's albedo, roughness and
+ *   metalness.
  * - cakeFieldOf() returns the same with or without the topping, so a ray
- *   refracted into a translucent topping can march to the part beneath.
+ *   refracted into a translucent topping can march to the part beneath;
+ *   the decorations are in both, so one embedded in a translucent topping
+ *   shows through it.
  */
 export const cakeChunk = /* glsl */ `
   ${plateChunk}
@@ -40,15 +46,21 @@ export const cakeChunk = /* glsl */ `
   uniform float stackBoundRadiusMeters;
   uniform float stackBoundTopMeters;
 
+  ${decorationsChunk}
+
+  const float DECORATION_METALNESS = 0.0; // no decoration is a metal
   const float LAYER_METALNESS = 0.0; // no layer is a metal
   const float TOPPING_METALNESS = 0.0; // no topping is a metal
 
-  vec3 cakeAlbedoOf(float materialId) {
+  // The albedo of a material id at the point hit, which a sprinkle's
+  // colour needs.
+  vec3 cakeAlbedoOf(float materialId, vec3 point) {
     if (materialId < MATERIAL_PLATE - 0.5) {
       return layerColors[int(materialId + 0.5)];
     }
-    if (materialId > MATERIAL_TOPPING - 0.5) return toppingColor;
-    return plateColor;
+    if (materialId < MATERIAL_TOPPING - 0.5) return plateColor;
+    if (materialId < MATERIAL_TOPPING + 0.5) return toppingColor;
+    return decorationAlbedoOf(materialId, point);
   }
 
   // The stack's distance with the eaten slice cut from it. Up to half a
@@ -93,9 +105,10 @@ export const cakeChunk = /* glsl */ `
   // then either lies too far to change the smoothed stack, or lies so far
   // beyond the plate, less the quarter blend the smoothing can take off,
   // that the plate stays the nearer part whatever the coat does. Then the
-  // topping is unioned with the stack before the cut, so the cut passes
-  // through both and the plate's gate reads both. Without the topping, the
-  // cut stack and the plate alone, as a translucent topping covers them.
+  // topping and the decorations are unioned with the stack before the cut,
+  // so the cut passes through all three and the plate's gate reads them.
+  // Without the topping, the cut stack, the decorations and the plate, as
+  // a translucent topping covers them.
   vec2 cakeFieldOf(vec3 p, bool withTopping) {
     vec2 q = vec2(length(p.xz), p.y);
 
@@ -138,6 +151,8 @@ export const cakeChunk = /* glsl */ `
       vec2 topping = toppingField(p, q, stack.z, stack.x);
       if (topping.x < cake.x) cake = topping;
     }
+    vec2 decorations = decorationsField(p);
+    if (decorations.x < cake.x) cake = decorations;
     cake.x = eatenStackDistance(p, cake.x);
     if (firstSlot >= 0 && plateBound < cake.x) plate = plateField(q);
     return plate.x < cake.x ? plate : cake;
@@ -149,19 +164,22 @@ export const cakeChunk = /* glsl */ `
     return cakeFieldOf(p, true);
   }
 
-  // A layer and the topping are never metals; the plate may be.
+  // A layer, the topping and a decoration are never metals; the plate may
+  // be.
   float cakeMetalnessOf(float materialId) {
     if (materialId < MATERIAL_PLATE - 0.5) return LAYER_METALNESS;
-    if (materialId > MATERIAL_TOPPING - 0.5) return TOPPING_METALNESS;
-    return plateMetalness;
+    if (materialId < MATERIAL_TOPPING - 0.5) return plateMetalness;
+    if (materialId < MATERIAL_TOPPING + 0.5) return TOPPING_METALNESS;
+    return DECORATION_METALNESS;
   }
 
   float cakeRoughnessOf(float materialId) {
     if (materialId < MATERIAL_PLATE - 0.5) {
       return layerRoughnesses[int(materialId + 0.5)];
     }
-    if (materialId > MATERIAL_TOPPING - 0.5) return toppingRoughness;
-    return plateRoughness;
+    if (materialId < MATERIAL_TOPPING - 0.5) return plateRoughness;
+    if (materialId < MATERIAL_TOPPING + 0.5) return toppingRoughness;
+    return decorationRoughnessOf(materialId);
   }
 `;
 
@@ -175,6 +193,19 @@ export const cakeChunk = /* glsl */ `
  * @returns The uniforms, keyed by the names the chunks declare.
  */
 export const createCakeUniforms = () => ({
+  decorationColors: {
+    value: Array.from({ length: DECORATION_SLOTS }, () => new Color()),
+  },
+  decorationCount: { value: 0 },
+  decorationEmbedsMeters: { value: new Float32Array(DECORATION_SLOTS) },
+  decorationKinds: { value: new Float32Array(DECORATION_SLOTS) },
+  // Three numbers a slot, x, the offset in height and z, in metres.
+  decorationOffsets: { value: new Float32Array(3 * DECORATION_SLOTS) },
+  decorationRoughnesses: { value: new Float32Array(DECORATION_SLOTS) },
+  // Nine numbers a slot, its mat3 in column-major order, which r187's
+  // WebGLUniforms passes to uniformMatrix3fv unchanged.
+  decorationRotations: { value: new Float32Array(9 * DECORATION_SLOTS) },
+  decorationScales: { value: new Float32Array(DECORATION_SLOTS) },
   eatenAngleRadians: { value: 0 },
   layerBottomRadiiMeters: { value: new Float32Array(LAYER_SLOTS) },
   layerBottomsMeters: { value: new Float32Array(LAYER_SLOTS) },
@@ -196,6 +227,11 @@ export const createCakeUniforms = () => ({
   plateRoughness: { value: 0 },
   plateSweepHeightMeters: { value: 0 },
   plateThicknessMeters: { value: 0 },
+  scatterCellMeters: { value: 0 },
+  scatterColor: { value: new Color() },
+  scatterKind: { value: 0 },
+  scatterOffsetMeters: { value: 0 },
+  scatterScale: { value: 0 },
   stackBoundBottomMeters: { value: 0 },
   stackBoundRadiusMeters: { value: 0 },
   stackBoundTopMeters: { value: 0 },
@@ -219,6 +255,10 @@ export const createCakeUniforms = () => ({
  *   createCakeUniforms() returned is no longer read.
  * - Each colour is set by Color.setRGB() from its sRGB channels, which
  *   Three.js converts into its linear working colour space in place.
+ * - Writes every decoration slot, an empty one at scale 0, and raises the
+ *   march's copy of the stack's top, `stackBoundTopMeters`, by the
+ *   greatest current drop offset above rest, so the bound never clips a
+ *   falling item; the camera's fit reads `values.bounds`, without it.
  * - Clamps, since an underdamped spring can pass through 0: every length
  *   at 0 and below, so a layer's bottom never sinks into the plate, the
  *   coverage within 0 and 1, and each layer's rounding at the least of its
@@ -228,10 +268,10 @@ export const createCakeUniforms = () => ({
  *   them and UniformsUtils.merge() copied them.
  * @param values The cake's values, as src/motion/cake-motion.js keeps
  *   them: the resolved cake's shape, with each colour as sRGB channels
- *   `r`, `g` and `b`, from 0 to 1.
+ *   `r`, `g` and `b`, from 0 to 1, and its decorations.
  */
 export const writeCakeUniforms = (uniforms, values) => {
-  const { bounds, layers, plate, topping } = values;
+  const { bounds, decorations, layers, plate, topping } = values;
 
   uniforms.eatenAngleRadians.value = values.eatenAngleRadians;
 
@@ -289,7 +329,44 @@ export const writeCakeUniforms = (uniforms, values) => {
   uniforms.plateBoundTopMeters.value = bounds.plate.topMeters;
   uniforms.stackBoundBottomMeters.value = bounds.stack.bottomMeters;
   uniforms.stackBoundRadiusMeters.value = bounds.stack.radiusMeters;
-  uniforms.stackBoundTopMeters.value = bounds.stack.topMeters;
+  uniforms.stackBoundTopMeters.value =
+    bounds.stack.radiusMeters > 0
+      ? bounds.stack.topMeters + decorations.liftMeters
+      : 0;
+
+  writeDecorationUniforms(uniforms, decorations);
+};
+
+/** #### Copies the decorations' values into their uniforms, in place
+ * - Each slot's offset holds its x, its animated height offset and its z;
+ *   its scale, the hash's times the animation's, is clamped at 0.
+ * - Allocates nothing.
+ */
+const writeDecorationUniforms = (uniforms, decorations) => {
+  const { items, scatter } = decorations;
+  const offsets = uniforms.decorationOffsets.value;
+  const rotations = uniforms.decorationRotations.value;
+  for (let slot = 0; slot < DECORATION_SLOTS; slot++) {
+    const item = items[slot];
+    setColor(uniforms.decorationColors.value[slot], item.color);
+    uniforms.decorationEmbedsMeters.value[slot] = item.embedMeters;
+    uniforms.decorationKinds.value[slot] = item.kindId;
+    offsets[3 * slot] = item.xMeters;
+    offsets[3 * slot + 1] = item.offsetMeters;
+    offsets[3 * slot + 2] = item.zMeters;
+    uniforms.decorationRoughnesses.value[slot] = item.roughness;
+    for (let index = 0; index < 9; index++) {
+      rotations[9 * slot + index] = item.rotation[index];
+    }
+    uniforms.decorationScales.value[slot] = Math.max(item.scale, 0);
+  }
+  uniforms.decorationCount.value = decorations.count;
+
+  uniforms.scatterCellMeters.value = scatter.cellMeters;
+  setColor(uniforms.scatterColor.value, scatter.color);
+  uniforms.scatterKind.value = scatter.kindId;
+  uniforms.scatterOffsetMeters.value = scatter.offsetMeters;
+  uniforms.scatterScale.value = Math.max(scatter.scale, 0);
 };
 
 /** Sets a Color from sRGB channels, from 0 to 1, without allocating. */

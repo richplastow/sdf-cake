@@ -8,8 +8,9 @@
  * a Ctrl-drag off Apple devices, zoom; a double-click eases the drag's turn
  * and tilt and the zoom back to the view at load. Left and Right, and the
  * two arrow buttons, walk round the loop of cakes, each becoming the next
- * on springs, with the location hash kept in step, and the camera stays
- * fitted to the cake. That is the whole of Presentation Mode, the only
+ * on springs, its decorations sinking away first and the next cake's
+ * dropping in last, with the location hash kept in step, and the camera
+ * stays fitted to the cake. That is the whole of Presentation Mode, the only
  * mode so far.
  */
 
@@ -22,6 +23,7 @@ import {
   Timer,
   WebGLRenderer,
 } from "three";
+import { placeDecorations, placeScatter } from "./cake/place.js";
 import { RECIPES } from "./cake/recipes.js";
 import { eatenRadiansForFraction, resolveRecipe } from "./cake/resolve.js";
 import { cakeIndexForHash } from "./cake/select.js";
@@ -105,10 +107,25 @@ rig.add(camera, ...createLights());
 const quad = createRaymarchQuad(camera);
 scene.add(rig, quad);
 
-// The cake the hash names, in motion from load: its values are written
-// into the material's own uniforms every frame.
+/** #### Resolves a recipe and places its decorations
+ * - Placement is deterministic, so a cake always decorates the same way.
+ * @param recipe A recipe, as src/cake/recipes.js holds them.
+ * @returns The resolved cake, with its `decorations`: its `slots` and its
+ *   `scatter`.
+ */
+const resolveCake = (recipe) => {
+  const cake = resolveRecipe(recipe);
+  cake.decorations = {
+    scatter: placeScatter(recipe),
+    slots: placeDecorations(recipe),
+  };
+  return cake;
+};
+
+// The cake the hash names, in motion from load, its decorations at rest:
+// its values are written into the material's own uniforms every frame.
 let cakeIndex = cakeIndexForHash(location.hash, RECIPES);
-const motion = createCakeMotion(resolveRecipe(RECIPES[cakeIndex]));
+const motion = createCakeMotion(resolveCake(RECIPES[cakeIndex]));
 
 // The camera's distance from the rig, before the zoom, and the rig's
 // height, each springing to fit the sphere round the cake's bounding
@@ -146,7 +163,7 @@ let isHeld = false; // a press holds the cake, which pauses the slow turn
 const goToCake = (index, eatenFraction) => {
   cakeIndex = index;
   const recipe = RECIPES[index];
-  const cake = resolveRecipe(recipe);
+  const cake = resolveCake(recipe);
   cake.eatenAngleRadians = eatenRadiansForFraction(eatenFraction);
   retargetCakeMotion(motion, cake, { reducedMotion: reducedMotion.matches });
   isCameraJumping ||= reducedMotion.matches;

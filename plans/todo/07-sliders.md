@@ -17,7 +17,7 @@ type: plan
   [Creating vertical form controls](https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_writing_modes/Vertical_controls)
   for the vertical range input, and ports
   pureland-simulator's `docs/src/ui/controls-toggle.js`.
-- Depends on [Plan 06](06-decorations.md), so that the reveal has every
+- Depends on [Plan 06](../done/06-decorations.md), so that the reveal has every
   part to remove; feeds [Plan 08](08-crumb.md) nothing, and is the last
   of the UI.
 - Needed because the slice is fixed per cake and nothing takes a cake

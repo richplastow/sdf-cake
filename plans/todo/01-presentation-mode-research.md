@@ -586,7 +586,7 @@ accepted and the next rejected.
    loop, and the camera following the cake. Visible proof: one cake
    becomes the next, layers hanging and bouncing, and a second press mid
    transition retargets.
-5. [Plan 06, Decorations](06-decorations.md): the countable and scattered
+5. [Plan 06, Decorations](../done/06-decorations.md): the countable and scattered
    kinds, their placement, their fields and their sink and fall. Visible
    proof: cherries, candles, orange slices, almonds, sprinkles and flakes
    that fall into place last and sink away first.

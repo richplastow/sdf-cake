@@ -20,7 +20,7 @@ type: plan
   [Plan 03](./03-frame-budget.md) for the walk that skips each part
   by a cheap bound, the two bounding cylinders and the march's step
   budget; feeds [Plan 05](05-transitions.md), whose springs animate the
-  coverage, and [Plan 06](../todo/06-decorations.md), which sits decorations on
+  coverage, and [Plan 06](./06-decorations.md), which sits decorations on
   the topping's surface.
 - The "before" is the live site, `https://richplastow.com/sdf-cake/`,
   which shows Plan 03's commit `9771778`: every cake bare.

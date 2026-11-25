@@ -286,7 +286,7 @@ export const raymarchFragmentShader = /* glsl */ `
     vec3 toViewer,
     bool withTopping
   ) {
-    vec3 albedo = cakeAlbedoOf(materialId);
+    vec3 albedo = cakeAlbedoOf(materialId, point);
     float metalness = cakeMetalnessOf(materialId);
     PhysicalMaterial material;
     material.diffuseColor = albedo;
@@ -459,10 +459,11 @@ export const raymarchFragmentShader = /* glsl */ `
       true
     );
 
-    // Only a hit on a translucent topping pays for the march beneath it.
+    // Only a hit on a translucent topping, its own id alone, never a
+    // decoration's above it, pays for the march beneath it.
     vec3 outgoingLight = totalOf(reflectedLight);
     if (
-      hit.materialId > MATERIAL_TOPPING - 0.5 &&
+      abs(hit.materialId - MATERIAL_TOPPING) < 0.5 &&
       toppingTranslucency > 0.0
     ) {
       outgoingLight = throughTopping(

@@ -11,9 +11,10 @@
  *   functions, https://iquilezles.org/articles/distfunctions/, or on 2D
  *   distance functions, https://iquilezles.org/articles/distfunctions2d/,
  *   and the comment beside it names the function there.
- * - A primitive's distance is exact. An operator's is a bound, which can
- *   underestimate the distance but never overestimate it, so a march that
- *   steps by it never crosses a surface.
+ * - A primitive's distance is exact, but for the ellipsoid's. An
+ *   operator's, and the ellipsoid's, is a bound, which can underestimate
+ *   the distance but never overestimate it, so a march that steps by it
+ *   never crosses a surface.
  * - The segment and the cone divide by a squared length that can be 0, as
  *   for a lip of zero height or a rounded layer whose cone has no height;
  *   each divisor is held at `MIN_DIVISOR_METERS_SQUARED` or more, so the
@@ -27,6 +28,13 @@ export const primitivesChunk = /* glsl */ `
   // The distance a field returns for a part it skips, in metres: far past
   // the reach of any march, so the part never draws.
   const float NO_SURFACE_METERS = 1e3;
+
+  // The distance to a box centred on the origin, of the given half extents
+  // along x, y and z: iq's sdBox, exact.
+  float boxDistance(vec3 p, vec3 halfExtents) {
+    vec3 q = abs(p) - halfExtents;
+    return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
+  }
 
   // The distance to a cone on the Y axis with its tip cut off, centred on
   // the origin, of the given bottom and top radii and half height: iq's
@@ -57,6 +65,17 @@ export const primitivesChunk = /* glsl */ `
   float cappedCylinderDistance(vec3 p, float halfHeight, float radius) {
     vec2 d = abs(vec2(length(p.xz), p.y)) - vec2(radius, halfHeight);
     return min(max(d.x, d.y), 0.0) + length(max(d, 0.0));
+  }
+
+  // The distance to an ellipsoid centred on the origin, of the given radii
+  // along x, y and z: iq's sdEllipsoid, which the article marks a bound,
+  // not exact: it can underestimate the distance away from the surface,
+  // but is zero on it, so it needs no step factor. The divisor is guarded
+  // at the centre, where it is 0.
+  float ellipsoidDistance(vec3 p, vec3 radii) {
+    float k0 = length(p / radii);
+    float k1 = length(p / (radii * radii));
+    return k0 * (k0 - 1.0) / max(k1, MIN_DIVISOR_METERS_SQUARED);
   }
 
   // The capped cone with its edges rounded off by the rounding, which keeps
@@ -117,10 +136,23 @@ export const primitivesChunk = /* glsl */ `
     return length(pa - ba * h);
   }
 
+  // The distance to a sphere centred on the origin, of the given radius:
+  // iq's sdSphere, exact.
+  float sphereDistance(vec3 p, float radius) {
+    return length(p) - radius;
+  }
+
   // The distance to what is left of a shape once a cut is taken from it:
   // iq's opSubtraction, a bound.
   float subtractDistance(float cut, float from) {
     return max(-cut, from);
+  }
+
+  // The distance to a capsule on the Y axis, from the origin up to the
+  // height, of the given radius: iq's sdVerticalCapsule, exact.
+  float verticalCapsuleDistance(vec3 p, float height, float radius) {
+    p.y -= clamp(p.y, 0.0, height);
+    return length(p) - radius;
   }
 
   // The distance to a solid wedge about +X in the xz plane, the half angle

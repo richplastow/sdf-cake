@@ -6,7 +6,8 @@
  */
 
 import { MATERIALS } from "./materials.js";
-import { LAYER_SLOTS } from "./slots.js";
+import { greatestDecorationHeightMeters, kindNamed } from "./place.js";
+import { DECORATION_SLOTS, LAYER_SLOTS } from "./slots.js";
 
 // The margin by which each bounding cylinder passes its part's extent, in
 // radius and at both ends: 2 mm, which covers the march's own slop and
@@ -56,7 +57,8 @@ export const EATEN_MAX_RADIANS = FULL_TURN_RADIANS - SLIVER_RADIANS;
  *   coloured `#000000`.
  * - The stack's cylinder grows by the topping's thickness, and the most its
  *   smoothing can push the coat further out, in radius, and by the same
- *   plus its pile at the top, as writeCakeBounds() works them out.
+ *   plus its pile and its tallest decoration at the top, as
+ *   writeCakeBounds() works them out.
  * - The topping's `translucency`, 0 to 1, defaults to 0, opaque.
  * - Colours stay sRGB `#rrggbb` strings, as the palette gives them.
  * @param recipe A recipe, as src/cake/recipes.js holds them.
@@ -108,7 +110,13 @@ export const resolveRecipe = (recipe) => {
 
   const topping = resolveTopping(recipe.topping, crown);
   const bounds = { plate: {}, stack: {} };
-  writeCakeBounds(bounds, layers, plate, topping);
+  writeCakeBounds(
+    bounds,
+    greatestDecorationHeightMeters(recipe.decorations),
+    layers,
+    plate,
+    topping,
+  );
 
   return {
     plate,
@@ -132,6 +140,8 @@ export const eatenRadiansForFraction = (fraction) =>
  *   above 0.
  * - It holds at most `LAYER_SLOTS` layers, and each layer's rounding is at
  *   most the least of its radii and half its height.
+ * - Its countable decorations, every kind but a scattered one, total at
+ *   most `DECORATION_SLOTS`.
  * - Every material it names, the plate's, the topping's and each layer's,
  *   is in the palette.
  * - The topping's `translucency`, where given, lies within 0 and 1.
@@ -160,6 +170,20 @@ export const validateRecipe = (recipe) => {
     (decorationCount > 0 ? 1 : 0);
   if (partCount < 2) {
     problems.push(`It has ${partCount} part(s), and needs at least 2.`);
+  }
+
+  const countableTotal = decorations.reduce(
+    (total, decoration) =>
+      kindNamed(decoration.kind)?.isScattered
+        ? total
+        : total + decoration.count,
+    0,
+  );
+  if (countableTotal > DECORATION_SLOTS) {
+    problems.push(
+      `It has ${countableTotal} countable decorations, and holds at most ` +
+        `${DECORATION_SLOTS}.`,
+    );
   }
 
   if (layers.length > LAYER_SLOTS) {
@@ -237,8 +261,8 @@ export const validateRecipe = (recipe) => {
  * - The stack's spans the lowest bottom of its used layers, those taller
  *   than 0, to their highest top, of radius the widest of their two radii,
  *   grown by the topping's thickness and the most its smoothing can push
- *   the coat further out, in radius, and by the same and its pile at the
- *   top.
+ *   the coat further out, in radius, and by the same, its pile and its
+ *   tallest decoration at the top.
  * - Each grows by `BOUND_MARGIN_METERS`; a part a cake lacks has a
  *   cylinder of all zeros, with no margin.
  * - Reads lengths below 0, which a spring can pass through, as 0, so it
@@ -246,13 +270,21 @@ export const validateRecipe = (recipe) => {
  *   so it is safe on the per-frame path.
  * @param bounds The bounds to write, mutated: `plate` and `stack`, each
  *   its `bottomMeters`, `radiusMeters` and `topMeters`.
+ * @param decorationHeightMeters The most any of the cake's decorations
+ *   stands above the topping's surface, in metres, 0 for none.
  * @param layers The cake's layers, each its `bottomMeters`,
  *   `heightMeters`, `bottomRadiusMeters` and `topRadiusMeters`.
  * @param plate The cake's plate, its lengths in metres.
  * @param topping The cake's topping, its lengths in metres.
  * @returns The bounds.
  */
-export const writeCakeBounds = (bounds, layers, plate, topping) => {
+export const writeCakeBounds = (
+  bounds,
+  decorationHeightMeters,
+  layers,
+  plate,
+  topping,
+) => {
   // The plate's stroked profile reaches half its thickness past the rim,
   // down to its underside, one thickness below the origin, and up to the
   // lip's top, at the sweep's height plus the lip's.
@@ -285,8 +317,8 @@ export const writeCakeBounds = (bounds, layers, plate, topping) => {
   }
 
   // The skirt and the full cap pass the widest layer by at most the
-  // thickness and the smoothing's bulge, and the pile rises above the
-  // cap's top, itself raised by the bulge.
+  // thickness and the smoothing's bulge, the pile rises above the cap's
+  // top, itself raised by the bulge, and the decorations stand on both.
   const toppingThicknessMeters = Math.max(topping.thicknessMeters, 0);
   const bulgedThicknessMeters =
     (1 + SKIRT_BULGE_PER_THICKNESS) * toppingThicknessMeters;
@@ -294,7 +326,10 @@ export const writeCakeBounds = (bounds, layers, plate, topping) => {
     bounds.stack,
     stackBottomMeters,
     widestRadiusMeters + bulgedThicknessMeters,
-    stackTopMeters + bulgedThicknessMeters + Math.max(topping.pileMeters, 0),
+    stackTopMeters +
+      bulgedThicknessMeters +
+      Math.max(topping.pileMeters, 0) +
+      Math.max(decorationHeightMeters, 0),
   );
   return bounds;
 };

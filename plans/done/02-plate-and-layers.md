@@ -31,7 +31,7 @@ type: plan
    `layers.js`, and `cake.js` as the assembly that owns the uniforms.
    Nothing in `docs/src/cake/` imports from `three`, so Node can run it.
 2. **Slot counts** in `slots.js`, templated into the GLSL: `LAYER_SLOTS`
-   is 7. The `DECORATION_SLOTS` of [Plan 06](../todo/06-decorations.md) joins it
+   is 7. The `DECORATION_SLOTS` of [Plan 06](./06-decorations.md) joins it
    there.
 3. **The recipe.** An object per cake, with an assigned `id` that the
    location hash and later features quote. Materials are names from the
@@ -133,7 +133,7 @@ type: plan
    run from the bottom; a radius pair is bottom then top where they
    differ. The toppings and decorations are listed in
    [Plan 04](./04-topping.md#decisions) and
-   [Plan 06](../todo/06-decorations.md#decisions):
+   [Plan 06](./06-decorations.md#decisions):
 
    | Id | Plate | Layers (material, height, radius) | Eaten steps, min, max |
    | --- | --- | --- | --- |
@@ -315,7 +315,7 @@ Adds `docs/src/cake/materials.js`, `docs/src/cake/recipes.js`,
 is complete: its plate and layers from Decision 5, its `topping` from
 [Plan 04's Decision 2](./04-topping.md#decisions) (`null` for the
 cheesecake), its `decorations` from
-[Plan 06's Decision 3](../todo/06-decorations.md#decisions) (`[]` for the
+[Plan 06's Decision 3](./06-decorations.md#decisions) (`[]` for the
 Victoria sponge and the cheesecake), and each layer's
 `irregularityMeters` and `inclusions` from
 [Plan 08's Decision 5](../todo/08-crumb.md#decisions). The fruit cake, with no

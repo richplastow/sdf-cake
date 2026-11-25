@@ -2,14 +2,15 @@
  * @fileoverview
  * The cake in motion: a damped spring per animated number of the resolved
  * cake, the layers' bottoms following the stack beneath them, the eased
- * slice, the drips withdrawn and run down, and the `values` the uniforms'
- * writer reads, with the topping's footing and the bounding cylinders
- * derived from them every frame. Pure: nothing here imports from `three`,
- * so Node can run it.
+ * slice, the drips withdrawn and run down, the decorations sunk and
+ * dropped, and the `values` the uniforms' writer reads, with the topping's
+ * footing and the bounding cylinders derived from them every frame. Pure:
+ * nothing here imports from `three`, so Node can run it.
  */
 
+import { DECORATION_KINDS, greatestHeightMeters } from "../cake/place.js";
 import { writeCakeBounds } from "../cake/resolve.js";
-import { LAYER_SLOTS } from "../cake/slots.js";
+import { DECORATION_SLOTS, LAYER_SLOTS } from "../cake/slots.js";
 import {
   COLOR_SPRING,
   createSpring,
@@ -18,6 +19,15 @@ import {
   stepSpring,
 } from "./spring.js";
 
+// How long after a cake change starts the body of the cake retargets, in
+// seconds, so the old decorations begin to sink first.
+const BODY_DELAY_SECONDS = 0.2;
+// How long after a cake change starts the new cake's first item drops, in
+// seconds, how far above its rest it drops from, in metres, and how long
+// its fall takes, in seconds.
+const DROP_DELAY_SECONDS = 1.1;
+const DROP_HEIGHT_METERS = 0.12;
+const DROP_SECONDS = 0.45;
 // How long the drips take to run down once the layers settle, in seconds.
 const DRIP_RUN_SECONDS = 0.6;
 // How long the drips take to draw back up when a transition starts, in
@@ -38,8 +48,15 @@ const SETTLE_COVERAGE = 0.005;
 // every length spring must be for the layers to count as settled.
 const SETTLE_METERS = 0.0005;
 const SETTLE_METERS_PER_SECOND = 0.005;
+// How far an item sinks, as a multiple of its height, unitless, and how
+// long its sink takes, in seconds.
+const SINK_DEPTH_FACTOR = 2.5;
+const SINK_SECONDS = 0.4;
 // How long the slice takes to ease to a new angle, in seconds.
 const SLICE_SECONDS = 0.6;
+// How long after one item's sink or drop the next one's starts, in
+// seconds.
+const SLOT_STAGGER_SECONDS = 0.03;
 
 // The sprung numbers of each part, as the resolver names them: lengths on
 // the length spring, and surface numbers on the colour spring.
@@ -69,6 +86,14 @@ const DRIPS_RUNNING = "running";
 const DRIPS_WAITING = "waiting";
 const DRIPS_WITHDRAWING = "withdrawing";
 
+// A decoration's phases: none in its slot, placed and waiting for its
+// drop, falling, at rest, and sinking away.
+const ITEM_DROPPING = "dropping";
+const ITEM_EMPTY = "empty";
+const ITEM_RESTING = "resting";
+const ITEM_SINKING = "sinking";
+const ITEM_WAITING = "waiting";
+
 /** #### Creates the cake's motion, at rest on a resolved cake
  * - Creates every spring and the `values` object once, for the page's
  *   life: later cakes retarget them in place.
@@ -76,11 +101,27 @@ const DRIPS_WITHDRAWING = "withdrawing";
  *   channels `r`, `g` and `b`, from 0 to 1, and the topping's footing and
  *   the bounds derived from the layers, which at rest equal the
  *   resolver's.
- * @param cake The resolved cake, as resolveRecipe() returns it.
+ * - `values.decorations` holds `DECORATION_SLOTS` items and the scatter,
+ *   each with its animated `offsetMeters` and `scale`, the `count` of
+ *   slots in use, the greatest drop offset above rest, `liftMeters`, and
+ *   the tallest present kind's height, `reachMeters`. The cake's own
+ *   decorations stand at rest.
+ * @param cake The resolved cake, as resolveRecipe() returns it, with its
+ *   `decorations`: `slots`, as placeDecorations() returns them, and
+ *   `scatter`, as placeScatter() returns it.
  * @returns The motion, whose `values` the uniforms' writer reads.
  */
 export const createCakeMotion = (cake) => {
+  const decorations = {
+    count: 0,
+    items: Array.from({ length: DECORATION_SLOTS }, createItem),
+    liftMeters: 0,
+    reachMeters: 0,
+    scatter: createItem(),
+  };
+  installDecorations(decorations, cake.decorations, true);
   const values = {
+    decorations,
     eatenAngleRadians: cake.eatenAngleRadians,
     layers: cake.layers.map(copyPart),
     plate: copyPart(cake.plate),
@@ -93,6 +134,9 @@ export const createCakeMotion = (cake) => {
   const motion = {
     bottoms: cake.layers.map((layer) => createSpring(layer.bottomMeters)),
     coverage: createSpring(cake.topping.coverage),
+    // Seconds since the last cake change, and the decorations and the body
+    // still to come from it.
+    changeSeconds: Infinity,
     drips: {
       fromMeters: 0,
       meters: cake.topping.dripMeters,
@@ -110,6 +154,8 @@ export const createCakeMotion = (cake) => {
         values.layers[slot],
       ),
     ),
+    pendingBody: null,
+    pendingDecorations: null,
     plate: createPart(
       cake.plate,
       PLATE_LENGTH_KEYS,
@@ -134,6 +180,11 @@ export const createCakeMotion = (cake) => {
 };
 
 /** #### Starts the motion towards another resolved cake, from where it is
+ * - At once, every present decoration sinks from where it is, each
+ *   `SLOT_STAGGER_SECONDS` after the last and the scatter last, and any
+ *   drop still pending is cancelled. The body retargets
+ *   `BODY_DELAY_SECONDS` later, and the new cake's decorations are placed
+ *   and drop from `DROP_DELAY_SECONDS`, the scatter last.
  * - Every spring keeps its value and velocity, so a change mid transition
  *   carries on smoothly.
  * - A vanishing part keeps its colour: a slot of target height 0, a plate
@@ -143,13 +194,35 @@ export const createCakeMotion = (cake) => {
  * - The slice restarts its ease from its current angle; the drips draw
  *   back up, unless already doing so or waiting at 0.
  * - Under reduced motion every spring, the slice and the drips go straight
- *   to the target.
+ *   to the target, and the new cake's decorations stand at rest at once:
+ *   nothing sinks, waits or drops.
  * - Allocates nothing.
  * @param motion The motion, as createCakeMotion() made it, mutated.
- * @param cake The resolved cake to move towards.
+ * @param cake The resolved cake to move towards, with its `decorations`,
+ *   as createCakeMotion() takes them.
  * @param options `reducedMotion`, true to skip the animation.
  */
 export const retargetCakeMotion = (motion, cake, { reducedMotion }) => {
+  const { decorations } = motion.values;
+  motion.changeSeconds = 0;
+  if (reducedMotion) {
+    motion.pendingBody = null;
+    motion.pendingDecorations = null;
+    retargetBody(motion, cake);
+    installDecorations(decorations, cake.decorations, true);
+    snapCakeMotion(motion);
+    stepCakeMotion(motion, 0);
+    return;
+  }
+  motion.pendingBody = cake;
+  motion.pendingDecorations = cake.decorations;
+  sinkDecorations(decorations);
+};
+
+/** #### Retargets the body of the cake, every spring, the slice and drips
+ * - Allocates nothing.
+ */
+const retargetBody = (motion, cake) => {
   for (let slot = 0; slot < LAYER_SLOTS; slot++) {
     const part = motion.layers[slot];
     const target = cake.layers[slot];
@@ -186,11 +259,6 @@ export const retargetCakeMotion = (motion, cake, { reducedMotion }) => {
     drips.phase = DRIPS_WITHDRAWING;
     drips.progress = 0;
   }
-
-  if (reducedMotion) {
-    snapCakeMotion(motion);
-    stepCakeMotion(motion, 0);
-  }
 };
 
 /** #### Advances the cake's motion by a time step and updates its values
@@ -201,6 +269,9 @@ export const retargetCakeMotion = (motion, cake, { reducedMotion }) => {
  * - Withdraws the drips linearly over `DRIP_WITHDRAW_SECONDS`, switches
  *   their wave count at 0, and runs them down by smoothstep over
  *   `DRIP_RUN_SECONDS` once the layers settle.
+ * - Retargets the body once `BODY_DELAY_SECONDS` have passed since a
+ *   change, and places the new cake's decorations once
+ *   `DROP_DELAY_SECONDS` have, then sinks and drops each decoration.
  * - Derives the topping's footing by toppingFooting(), and the bounding
  *   cylinders by writeCakeBounds(), from the values just written.
  * - Allocates nothing, so it is safe on the per-frame path.
@@ -210,6 +281,20 @@ export const retargetCakeMotion = (motion, cake, { reducedMotion }) => {
 export const stepCakeMotion = (motion, deltaSeconds) => {
   const { values } = motion;
   const dt = Math.max(deltaSeconds, 0);
+
+  motion.changeSeconds += dt;
+  if (motion.pendingBody && motion.changeSeconds >= BODY_DELAY_SECONDS) {
+    retargetBody(motion, motion.pendingBody);
+    motion.pendingBody = null;
+  }
+  if (
+    motion.pendingDecorations &&
+    motion.changeSeconds >= DROP_DELAY_SECONDS
+  ) {
+    installDecorations(values.decorations, motion.pendingDecorations, false);
+    motion.pendingDecorations = null;
+  }
+  stepDecorations(values.decorations, motion.changeSeconds);
 
   for (let slot = 0; slot < LAYER_SLOTS; slot++) {
     stepPart(motion.layers[slot], dt);
@@ -237,7 +322,13 @@ export const stepCakeMotion = (motion, deltaSeconds) => {
 
   toppingFooting(values.layers, values.topping);
   stepDrips(motion, dt);
-  writeCakeBounds(values.bounds, values.layers, values.plate, values.topping);
+  writeCakeBounds(
+    values.bounds,
+    values.decorations.reachMeters,
+    values.layers,
+    values.plate,
+    values.topping,
+  );
 };
 
 /** #### Derives the topping's footing, its base and crown radius, in place
@@ -299,6 +390,30 @@ const copyPart = (part) => ({
   },
 });
 
+/** #### Creates one decoration's state and values, empty
+ * - Its `rotation` is nine numbers, column-major; its `color`, sRGB
+ *   channels. The scatter uses the same shape, with `cellMeters`.
+ */
+const createItem = () => ({
+  cellMeters: 0,
+  color: { r: 0, g: 0, b: 0 },
+  delaySeconds: 0,
+  embedMeters: 0,
+  fromMeters: 0,
+  fromScale: 0,
+  heightMeters: 0,
+  kindId: 0,
+  offsetMeters: 0,
+  phase: ITEM_EMPTY,
+  reachMeters: 0,
+  restScale: 0,
+  rotation: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+  roughness: 0,
+  scale: 0,
+  xMeters: 0,
+  zMeters: 0,
+});
+
 /** #### Creates the springs of one part, at rest on its resolved values
  * @param resolved The resolved part: a layer, the plate or the topping.
  * @param lengthKeys The names of its lengths, on the length spring.
@@ -325,6 +440,65 @@ const createPart = (resolved, lengthKeys, surfaceKeys, partValues) => {
     part.color[channel] = createSpring(partValues.color[channel]);
   }
   return part;
+};
+
+/** #### Places a cake's decorations in the items, at rest or to drop
+ * - Each slot's item takes its kind's height at its scale, for the sink,
+ *   and its kind's greatest height, for the bound. Slots past the cake's
+ *   are emptied.
+ * - To drop, each item waits at `DROP_HEIGHT_METERS` above its rest until
+ *   `DROP_DELAY_SECONDS` after the change, plus `SLOT_STAGGER_SECONDS` per
+ *   slot before it; the scatter waits for every slot.
+ */
+const installDecorations = (decorations, { scatter, slots }, isAtRest) => {
+  for (let slot = 0; slot < DECORATION_SLOTS; slot++) {
+    const item = decorations.items[slot];
+    const placed = slots[slot];
+    if (!placed) {
+      item.phase = ITEM_EMPTY;
+      item.scale = 0;
+      continue;
+    }
+    const kind = DECORATION_KINDS[placed.kindId - 1];
+    item.embedMeters = placed.embedMeters;
+    item.kindId = placed.kindId;
+    item.restScale = placed.scale;
+    item.roughness = placed.roughness;
+    item.xMeters = placed.xMeters;
+    item.zMeters = placed.zMeters;
+    for (let index = 0; index < 9; index++) {
+      item.rotation[index] = placed.rotation[index];
+    }
+    for (let index = 0; index < COLOR_CHANNELS.length; index++) {
+      item.color[COLOR_CHANNELS[index]] = channelOfHex(placed.color, index);
+    }
+    placeItemState(
+      item,
+      kind,
+      DROP_DELAY_SECONDS + slot * SLOT_STAGGER_SECONDS,
+      isAtRest,
+      placed.scale,
+    );
+  }
+
+  const item = decorations.scatter;
+  if (scatter.kindId <= 0) {
+    item.phase = ITEM_EMPTY;
+    item.scale = 0;
+    return;
+  }
+  item.cellMeters = scatter.cellMeters;
+  item.kindId = scatter.kindId;
+  for (let index = 0; index < COLOR_CHANNELS.length; index++) {
+    item.color[COLOR_CHANNELS[index]] = channelOfHex(scatter.color, index);
+  }
+  placeItemState(
+    item,
+    DECORATION_KINDS[scatter.kindId - 1],
+    DROP_DELAY_SECONDS + slots.length * SLOT_STAGGER_SECONDS,
+    isAtRest,
+    1,
+  );
 };
 
 /** Says whether a length spring is settled on its target. */
@@ -357,6 +531,18 @@ const isSettled = (motion) => {
     if (!isPartSettled(motion.layers[slot])) return false;
   }
   return isPartSettled(motion.plate) && isPartSettled(motion.topping);
+};
+
+/** #### Sets an item's phase, offset and scale, at rest or waiting to drop
+ */
+const placeItemState = (item, kind, delaySeconds, isAtRest, restScale) => {
+  item.delaySeconds = delaySeconds;
+  item.heightMeters = kind.sizeMeters[1] * restScale;
+  item.offsetMeters = isAtRest ? 0 : DROP_HEIGHT_METERS;
+  item.phase = isAtRest ? ITEM_RESTING : ITEM_WAITING;
+  item.reachMeters = greatestHeightMeters(kind);
+  item.restScale = restScale;
+  item.scale = isAtRest ? restScale : 0;
 };
 
 /** #### Retargets one part's springs on a resolved part
@@ -427,6 +613,38 @@ const snapSpring = (spring) => {
   spring.velocity = 0;
 };
 
+/** #### Starts every present decoration sinking from where it is
+ * - Each slot starts `SLOT_STAGGER_SECONDS` after the last present one,
+ *   the scatter last; an item still waiting to drop is emptied.
+ * - Allocates nothing.
+ */
+const sinkDecorations = (decorations) => {
+  let order = 0;
+  for (let slot = 0; slot < DECORATION_SLOTS; slot++) {
+    if (sinkItem(decorations.items[slot], order * SLOT_STAGGER_SECONDS)) {
+      order++;
+    }
+  }
+  sinkItem(decorations.scatter, order * SLOT_STAGGER_SECONDS);
+};
+
+/** #### Starts one item sinking from where it is, after a delay
+ * @returns Whether the item was present and now sinks.
+ */
+const sinkItem = (item, delaySeconds) => {
+  if (item.phase === ITEM_EMPTY) return false;
+  if (item.phase === ITEM_WAITING) {
+    item.phase = ITEM_EMPTY;
+    item.scale = 0;
+    return false;
+  }
+  item.delaySeconds = delaySeconds;
+  item.fromMeters = item.offsetMeters;
+  item.fromScale = item.scale;
+  item.phase = ITEM_SINKING;
+  return true;
+};
+
 /** #### Eases a linear progress, slow at both ends and fastest midway
  * - The curve of r187's MathUtils.smoothstep(), `p² × (3 − 2p)`, written
  *   here so that this module needs no Three.js, as src/input/view.js does.
@@ -467,6 +685,66 @@ const stepDrips = (motion, dt) => {
   }
   motion.values.topping.dripMeters = drips.meters;
   motion.values.topping.dripWaves = drips.waves;
+};
+
+/** #### Advances every decoration to the time since the last change
+ * - Sums the slots in use, the greatest drop offset above rest and the
+ *   tallest present kind's height into the decorations' values.
+ * - Allocates nothing.
+ */
+const stepDecorations = (decorations, changeSeconds) => {
+  let count = 0;
+  let liftMeters = 0;
+  let reachMeters = 0;
+  for (let slot = 0; slot <= DECORATION_SLOTS; slot++) {
+    const isScatter = slot === DECORATION_SLOTS;
+    const item = isScatter ? decorations.scatter : decorations.items[slot];
+    stepItem(item, changeSeconds);
+    if (item.phase === ITEM_EMPTY) continue;
+    if (!isScatter) count = slot + 1;
+    liftMeters = Math.max(liftMeters, item.offsetMeters);
+    reachMeters = Math.max(reachMeters, item.reachMeters);
+  }
+  decorations.count = count;
+  decorations.liftMeters = liftMeters;
+  decorations.reachMeters = reachMeters;
+};
+
+/** #### Advances one decoration to the time since the last change
+ * - Sinking, it falls `SINK_DEPTH_FACTOR` of its height below where it
+ *   started over `SINK_SECONDS`, eased out, its scale falling to 0 as the
+ *   sink ends, when it empties.
+ * - Waiting, it starts its drop at its delay. Dropping, it falls from
+ *   `DROP_HEIGHT_METERS` above its rest as under gravity, eased in, over
+ *   `DROP_SECONDS`, and then rests.
+ * - Allocates nothing.
+ */
+const stepItem = (item, changeSeconds) => {
+  const elapsedSeconds = changeSeconds - item.delaySeconds;
+  if (item.phase === ITEM_SINKING) {
+    const progress = clampUnit(elapsedSeconds / SINK_SECONDS);
+    const eased = 1 - (1 - progress) * (1 - progress);
+    item.offsetMeters =
+      item.fromMeters - SINK_DEPTH_FACTOR * item.heightMeters * eased;
+    item.scale = item.fromScale * (1 - progress * progress);
+    if (progress >= 1) {
+      item.phase = ITEM_EMPTY;
+      item.scale = 0;
+    }
+  } else if (item.phase === ITEM_WAITING) {
+    if (changeSeconds >= item.delaySeconds) {
+      item.phase = ITEM_DROPPING;
+      item.scale = item.restScale;
+    }
+  }
+  if (item.phase === ITEM_DROPPING) {
+    const progress = clampUnit(elapsedSeconds / DROP_SECONDS);
+    item.offsetMeters = DROP_HEIGHT_METERS * (1 - progress * progress);
+    if (progress >= 1) {
+      item.offsetMeters = 0;
+      item.phase = ITEM_RESTING;
+    }
+  }
 };
 
 /** #### Steps one part's springs and writes their values
