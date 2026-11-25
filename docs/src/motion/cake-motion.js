@@ -28,6 +28,9 @@ const BODY_DELAY_SECONDS = 0.2;
 const DROP_DELAY_SECONDS = 1.1;
 const DROP_HEIGHT_METERS = 0.12;
 const DROP_SECONDS = 0.45;
+// How long after a reveal stop brings the decorations back the first one
+// drops, in seconds: a first guess, to tune by eye.
+const REVEAL_DROP_DELAY_SECONDS = 0.15;
 // How long the drips take to run down once the layers settle, in seconds.
 const DRIP_RUN_SECONDS = 0.6;
 // How long the drips take to draw back up when a transition starts, in
@@ -119,7 +122,7 @@ export const createCakeMotion = (cake) => {
     reachMeters: 0,
     scatter: createItem(),
   };
-  installDecorations(decorations, cake.decorations, true);
+  installDecorations(decorations, cake.decorations, true, 0);
   const values = {
     decorations,
     eatenAngleRadians: cake.eatenAngleRadians,
@@ -209,7 +212,7 @@ export const retargetCakeMotion = (motion, cake, { reducedMotion }) => {
     motion.pendingBody = null;
     motion.pendingDecorations = null;
     retargetBody(motion, cake);
-    installDecorations(decorations, cake.decorations, true);
+    installDecorations(decorations, cake.decorations, true, 0);
     snapCakeMotion(motion);
     stepCakeMotion(motion, 0);
     return;
@@ -223,6 +226,88 @@ export const retargetCakeMotion = (motion, cake, { reducedMotion }) => {
  * - Allocates nothing.
  */
 const retargetBody = (motion, cake) => {
+  retargetParts(motion, cake);
+  const { slice } = motion;
+  slice.fromRadians = motion.values.eatenAngleRadians;
+  slice.progress = 0;
+  slice.toRadians = cake.eatenAngleRadians;
+};
+
+/** #### Retargets which parts of the cake show, within one cake
+ * - Takes the masked cake's plate, layers and topping at once, with no
+ *   `BODY_DELAY_SECONDS`, and leaves the slice alone. The drips draw back
+ *   up, unless already doing so or waiting at 0, and run down again once
+ *   the layers settle.
+ * - Decorations the mask hides sink from where they are; decorations it
+ *   brings back drop from `REVEAL_DROP_DELAY_SECONDS`, the scatter last.
+ *   Either restarts `changeSeconds`, which times the sink and the drop.
+ * - Mid cake change, the body and the decorations still pending take the
+ *   masked cake's in place of the old, so the change lands on them.
+ * - Under reduced motion every spring and the drips go straight to the
+ *   target, and the decorations stand at rest at once.
+ * - Allocates nothing.
+ * @param motion The motion, as createCakeMotion() made it, mutated.
+ * @param cake The masked resolved cake to move towards, with its
+ *   `decorations`, as createCakeMotion() takes them.
+ * @param options `reducedMotion`, true to skip the animation.
+ */
+export const retargetPresence = (motion, cake, { reducedMotion }) => {
+  const { decorations } = motion.values;
+  if (reducedMotion) {
+    retargetParts(motion, cake);
+    installDecorations(decorations, cake.decorations, true, 0);
+    snapCakeMotion(motion);
+    stepCakeMotion(motion, 0);
+    return;
+  }
+  if (motion.pendingBody) motion.pendingBody = cake;
+  else retargetParts(motion, cake);
+  if (motion.pendingDecorations) {
+    motion.pendingDecorations = cake.decorations;
+    return;
+  }
+  const { scatter, slots } = cake.decorations;
+  const isShown = slots.length > 0 || scatter.kindId > 0;
+  if (isShown === hasStandingDecorations(decorations)) return;
+  motion.changeSeconds = 0;
+  if (isShown) {
+    installDecorations(
+      decorations,
+      cake.decorations,
+      false,
+      REVEAL_DROP_DELAY_SECONDS,
+    );
+  } else {
+    sinkDecorations(decorations);
+  }
+};
+
+/** #### Starts the slice towards another eaten angle, within one cake
+ * - Restarts the slice's ease from its current angle; nothing else moves.
+ * - Mid cake change, the body still pending takes the angle instead, so
+ *   the change lands on it.
+ * - Under reduced motion the slice goes straight to the angle.
+ * - Allocates nothing.
+ * @param motion The motion, as createCakeMotion() made it, mutated.
+ * @param eatenAngleRadians The eaten angle to move towards, in radians.
+ * @param options `reducedMotion`, true to skip the animation.
+ */
+export const retargetSlice = (motion, eatenAngleRadians, { reducedMotion }) => {
+  if (motion.pendingBody) {
+    motion.pendingBody.eatenAngleRadians = eatenAngleRadians;
+    return;
+  }
+  const { slice, values } = motion;
+  if (reducedMotion) values.eatenAngleRadians = eatenAngleRadians;
+  slice.fromRadians = values.eatenAngleRadians;
+  slice.progress = reducedMotion ? 1 : 0;
+  slice.toRadians = eatenAngleRadians;
+};
+
+/** #### Retargets every spring of the body and the drips, not the slice
+ * - Allocates nothing.
+ */
+const retargetParts = (motion, cake) => {
   for (let slot = 0; slot < LAYER_SLOTS; slot++) {
     const part = motion.layers[slot];
     const target = cake.layers[slot];
@@ -247,11 +332,7 @@ const retargetBody = (motion, cake) => {
   );
   motion.coverage.target = cake.topping.coverage;
 
-  const { drips, slice } = motion;
-  slice.fromRadians = motion.values.eatenAngleRadians;
-  slice.progress = 0;
-  slice.toRadians = cake.eatenAngleRadians;
-
+  const { drips } = motion;
   drips.targetMeters = cake.topping.dripMeters;
   drips.targetWaves = cake.topping.dripWaves;
   if (drips.phase === DRIPS_RESTING || drips.phase === DRIPS_RUNNING) {
@@ -291,7 +372,12 @@ export const stepCakeMotion = (motion, deltaSeconds) => {
     motion.pendingDecorations &&
     motion.changeSeconds >= DROP_DELAY_SECONDS
   ) {
-    installDecorations(values.decorations, motion.pendingDecorations, false);
+    installDecorations(
+      values.decorations,
+      motion.pendingDecorations,
+      false,
+      DROP_DELAY_SECONDS,
+    );
     motion.pendingDecorations = null;
   }
   stepDecorations(values.decorations, motion.changeSeconds);
@@ -447,10 +533,15 @@ const createPart = (resolved, lengthKeys, surfaceKeys, partValues) => {
  *   and its kind's greatest height, for the bound. Slots past the cake's
  *   are emptied.
  * - To drop, each item waits at `DROP_HEIGHT_METERS` above its rest until
- *   `DROP_DELAY_SECONDS` after the change, plus `SLOT_STAGGER_SECONDS` per
+ *   `dropDelaySeconds` after the change, plus `SLOT_STAGGER_SECONDS` per
  *   slot before it; the scatter waits for every slot.
  */
-const installDecorations = (decorations, { scatter, slots }, isAtRest) => {
+const installDecorations = (
+  decorations,
+  { scatter, slots },
+  isAtRest,
+  dropDelaySeconds,
+) => {
   for (let slot = 0; slot < DECORATION_SLOTS; slot++) {
     const item = decorations.items[slot];
     const placed = slots[slot];
@@ -475,7 +566,7 @@ const installDecorations = (decorations, { scatter, slots }, isAtRest) => {
     placeItemState(
       item,
       kind,
-      DROP_DELAY_SECONDS + slot * SLOT_STAGGER_SECONDS,
+      dropDelaySeconds + slot * SLOT_STAGGER_SECONDS,
       isAtRest,
       placed.scale,
     );
@@ -495,10 +586,22 @@ const installDecorations = (decorations, { scatter, slots }, isAtRest) => {
   placeItemState(
     item,
     DECORATION_KINDS[scatter.kindId - 1],
-    DROP_DELAY_SECONDS + slots.length * SLOT_STAGGER_SECONDS,
+    dropDelaySeconds + slots.length * SLOT_STAGGER_SECONDS,
     isAtRest,
     1,
   );
+};
+
+/** #### Says whether any decoration stands, or waits or falls to stand
+ * - An item that is empty or sinking away does not count.
+ */
+const hasStandingDecorations = (decorations) => {
+  for (let slot = 0; slot <= DECORATION_SLOTS; slot++) {
+    const item =
+      slot === DECORATION_SLOTS ? decorations.scatter : decorations.items[slot];
+    if (item.phase !== ITEM_EMPTY && item.phase !== ITEM_SINKING) return true;
+  }
+  return false;
 };
 
 /** Says whether a length spring is settled on its target. */

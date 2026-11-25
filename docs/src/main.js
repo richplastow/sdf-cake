@@ -6,12 +6,15 @@
  * it, pausing the slow turn while held; the scroll wheel, a trackpad's
  * scroll or pinch, a touch screen's pinch, and a Cmd-drag up and down, or
  * a Ctrl-drag off Apple devices, zoom; a double-click eases the drag's turn
- * and tilt and the zoom back to the view at load. Left and Right, and the
- * two arrow buttons, walk round the loop of cakes, each becoming the next
- * on springs, its decorations sinking away first and the next cake's
- * dropping in last, with the location hash kept in step, and the camera
- * stays fitted to the cake. That is the whole of Presentation Mode, the only
- * mode so far.
+ * and tilt and the zoom back to the view at load. The eaten slider along
+ * the bottom, Left and Right, and the two arrow buttons eat the cake step
+ * by step, and from the slider's ends walk round the loop of cakes, each
+ * becoming the next on springs, its decorations sinking away first and the
+ * next cake's dropping in last, with the location hash kept in step. The
+ * reveal slider up the right, Up and Down take the cake apart part by
+ * part, and Escape hides and shows the controls. The camera stays fitted
+ * to the cake. That is the whole of Presentation Mode, the only mode so
+ * far.
  */
 
 import {
@@ -25,8 +28,15 @@ import {
 } from "three";
 import { placeDecorations, placeScatter } from "./cake/place.js";
 import { RECIPES } from "./cake/recipes.js";
-import { eatenRadiansForFraction, resolveRecipe } from "./cake/resolve.js";
+import { resolveRecipe } from "./cake/resolve.js";
+import {
+  maskResolvedCake,
+  presenceMaskFor,
+  revealPartsOf,
+  snapRevealStop,
+} from "./cake/reveal.js";
 import { cakeIndexForHash } from "./cake/select.js";
+import { eatenAngleForStep, stepCountOf } from "./cake/slice.js";
 import { nextCakeIndex, previousCakeIndex } from "./cake/walk.js";
 import { distanceToFitSphere, fitSphereOfBounds } from "./camera/fit.js";
 import { connectDrag } from "./input/drag.js";
@@ -41,6 +51,8 @@ import { connectZoom } from "./input/zoom.js";
 import {
   createCakeMotion,
   retargetCakeMotion,
+  retargetPresence,
+  retargetSlice,
   stepCakeMotion,
 } from "./motion/cake-motion.js";
 import { CAMERA_SPRING, createSpring, stepSpring } from "./motion/spring.js";
@@ -48,7 +60,9 @@ import { createLights } from "./scene/lights.js";
 import { createRaymarchQuad } from "./scene/quad.js";
 import { writeCakeUniforms } from "./sdf/cake.js";
 import { connectCakeArrows } from "./ui/cake-arrows.js";
+import { connectControlsToggle } from "./ui/controls-toggle.js";
 import { connectArrowKeys } from "./ui/keys.js";
+import { connectSliders } from "./ui/sliders.js";
 
 const CAMERA_ELEVATION_RADIANS = MathUtils.degToRad(22); // above the table
 const CAMERA_FAR_METERS = 10;
@@ -81,6 +95,7 @@ const MAX_ZOOM_LOG = Math.log(MAX_ZOOM_RATIO);
 const MIN_ZOOM_LOG = Math.log(MIN_ZOOM_RATIO);
 
 const canvas = document.querySelector("canvas.scene");
+const controls = document.querySelector(".controls");
 
 // An `alpha` canvas clears to transparent, so the page shows through where
 // the shader draws nothing. Antialiasing stays off: it smooths only the
@@ -122,10 +137,29 @@ const resolveCake = (recipe) => {
   return cake;
 };
 
-// The cake the hash names, in motion from load, its decorations at rest:
-// its values are written into the material's own uniforms every frame.
+/** Gives a recipe's greatest reveal stop, the whole cake. */
+const revealMaxOf = (recipe) => revealPartsOf(recipe).length - 1;
+
+// The cake the hash names, at its first eaten step and its last reveal
+// stop, the whole cake, in motion from load, its decorations at rest: its
+// values are written into the material's own uniforms every frame.
 let cakeIndex = cakeIndexForHash(location.hash, RECIPES);
-const motion = createCakeMotion(resolveCake(RECIPES[cakeIndex]));
+let eatenStep = 0;
+let revealStop = revealMaxOf(RECIPES[cakeIndex]);
+
+/** #### Resolves a recipe at the current eaten step and reveal stop
+ * - Its eaten angle is the step's, and the stop's presence mask is applied
+ *   to it, so hidden parts have zero size.
+ * @param recipe A recipe, as src/cake/recipes.js holds them.
+ * @returns The resolved, masked cake, with its `decorations`.
+ */
+const stageCake = (recipe) => {
+  const cake = resolveCake(recipe);
+  cake.eatenAngleRadians = eatenAngleForStep(recipe.eaten, eatenStep);
+  return maskResolvedCake(cake, presenceMaskFor(recipe, revealStop));
+};
+
+const motion = createCakeMotion(stageCake(RECIPES[cakeIndex]));
 
 // The camera's distance from the rig, before the zoom, and the rig's
 // height, each springing to fit the sphere round the cake's bounding
@@ -154,32 +188,77 @@ const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
 let idleYawRadians = 0; // the slow turn's share of the cake's yaw
 let isHeld = false; // a press holds the cake, which pauses the slow turn
 
+/** #### Sets both sliders' values and `max`es to the current cake's */
+const showSliders = () => {
+  const recipe = RECIPES[cakeIndex];
+  sliders.setEaten(eatenStep, stepCountOf(recipe) - 1);
+  sliders.setReveal(revealStop, revealMaxOf(recipe));
+};
+
 /** #### Starts the transition to a cake, and writes its id as the hash
+ * - The reveal stop snaps to the new cake's slider by snapRevealStop(), so
+ *   the cake arrives taken apart as far as the last one was.
  * - Retargets the motion from where it is; under reduced motion the cake
  *   and the camera go straight to the new fit.
  * @param index The cake's index in walk order.
- * @param eatenFraction The fraction of a full turn the cake arrives eaten.
+ * @param step The eaten step the cake arrives at.
  */
-const goToCake = (index, eatenFraction) => {
+const goToCake = (index, step) => {
+  const oldRevealMax = revealMaxOf(RECIPES[cakeIndex]);
   cakeIndex = index;
   const recipe = RECIPES[index];
-  const cake = resolveCake(recipe);
-  cake.eatenAngleRadians = eatenRadiansForFraction(eatenFraction);
-  retargetCakeMotion(motion, cake, { reducedMotion: reducedMotion.matches });
+  eatenStep = step;
+  revealStop = snapRevealStop(revealStop, oldRevealMax, revealMaxOf(recipe));
+  retargetCakeMotion(motion, stageCake(recipe), {
+    reducedMotion: reducedMotion.matches,
+  });
   isCameraJumping ||= reducedMotion.matches;
+  showSliders();
   history.replaceState(null, "", `#${recipe.id}`);
 };
 
-/** Walks to the next cake, wrapping, with its narrowest slice. */
-const goToNextCake = () => {
-  const index = nextCakeIndex(cakeIndex, RECIPES.length);
-  goToCake(index, RECIPES[index].eaten.minFraction);
+/** #### Sets the eaten step within the current cake, easing the slice */
+const setEatenStep = (step) => {
+  eatenStep = step;
+  retargetSlice(motion, eatenAngleForStep(RECIPES[cakeIndex].eaten, step), {
+    reducedMotion: reducedMotion.matches,
+  });
+  showSliders();
 };
 
-/** Walks to the previous cake, wrapping, with its widest slice. */
-const goToPreviousCake = () => {
-  const index = previousCakeIndex(cakeIndex, RECIPES.length);
-  goToCake(index, RECIPES[index].eaten.maxFraction);
+/** #### Sets the reveal stop within the current cake, easing the parts */
+const setRevealStop = (stop) => {
+  revealStop = stop;
+  retargetPresence(motion, stageCake(RECIPES[cakeIndex]), {
+    reducedMotion: reducedMotion.matches,
+  });
+  showSliders();
+};
+
+/** #### Steps the eaten slider, walking to the next cake from its ends
+ * - Past step 0 it goes to the previous cake at its last step; past the
+ *   last step, to the next cake at step 0, both wrapping.
+ * @param delta The steps to move, −1 or 1.
+ */
+const stepEaten = (delta) => {
+  const step = eatenStep + delta;
+  if (step < 0) {
+    const index = previousCakeIndex(cakeIndex, RECIPES.length);
+    goToCake(index, stepCountOf(RECIPES[index]) - 1);
+  } else if (step > stepCountOf(RECIPES[cakeIndex]) - 1) {
+    goToCake(nextCakeIndex(cakeIndex, RECIPES.length), 0);
+  } else {
+    setEatenStep(step);
+  }
+};
+
+/** #### Steps the reveal slider, doing nothing past either end
+ * @param delta The stops to move, −1 or 1.
+ */
+const stepReveal = (delta) => {
+  const stop = revealStop + delta;
+  if (stop < 0 || stop > revealMaxOf(RECIPES[cakeIndex])) return;
+  setRevealStop(stop);
 };
 
 /** #### Places the rig and the camera to show the view
@@ -258,17 +337,33 @@ connectDrag(canvas, {
 connectZoom(canvas, zoomBy);
 canvas.addEventListener("dblclick", () => startViewReset(viewReset, view));
 
-connectArrowKeys({ onLeft: goToPreviousCake, onRight: goToNextCake });
-connectCakeArrows(document.querySelector(".controls"), {
-  onNext: goToNextCake,
-  onPrevious: goToPreviousCake,
+// The sliders' `input` events, from a key, a click or a drag, retarget
+// within the cake; neither walks to another cake.
+const sliders = connectSliders(controls, {
+  onEaten: (step) => {
+    if (step !== eatenStep) setEatenStep(step);
+  },
+  onReveal: (stop) => {
+    if (stop !== revealStop) setRevealStop(stop);
+  },
 });
+showSliders();
+connectArrowKeys({
+  onDown: () => stepReveal(-1),
+  onLeft: () => stepEaten(-1),
+  onRight: () => stepEaten(1),
+  onUp: () => stepReveal(1),
+});
+connectCakeArrows(controls, {
+  onNext: () => stepEaten(1),
+  onPrevious: () => stepEaten(-1),
+});
+connectControlsToggle();
 // The viewer editing the hash in the URL starts a transition to the cake
-// it names, with its narrowest slice; history.replaceState() fires no
+// it names, at its first eaten step; history.replaceState() fires no
 // `hashchange`, so the walk's own writes never reach here.
 window.addEventListener("hashchange", () => {
-  const index = cakeIndexForHash(location.hash, RECIPES);
-  goToCake(index, RECIPES[index].eaten.minFraction);
+  goToCake(cakeIndexForHash(location.hash, RECIPES), 0);
 });
 
 /** #### Steps the camera's springs towards the fit of the cake's values

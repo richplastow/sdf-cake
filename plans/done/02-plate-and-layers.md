@@ -150,7 +150,7 @@ type: plan
    [Plan 08](../todo/08-crumb.md#decisions). The fruit cake has no plate so the
    plate's shrink to nothing is exercised; the cheesecake's 200 steps and
    the fruit cake's single step exercise the slider's extremes in
-   [Plan 07](../todo/07-sliders.md).
+   [Plan 07](./07-sliders.md).
 6. **Validation** returns a list of problems, empty when the recipe is
    valid: at least two parts (a plate, each layer, a topping with coverage
    above 0, decorations whose counts total above 0); at most

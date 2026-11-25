@@ -590,7 +590,7 @@ accepted and the next rejected.
    kinds, their placement, their fields and their sink and fall. Visible
    proof: cherries, candles, orange slices, almonds, sprinkles and flakes
    that fall into place last and sink away first.
-6. [Plan 07, The eaten and reveal sliders](07-sliders.md): the two range
+6. [Plan 07, The eaten and reveal sliders](../done/07-sliders.md): the two range
    inputs, the stepped eaten angle, the reveal of the parts, the four
    keys and Escape. Visible proof: the cake eaten step by step and taken
    apart stop by stop.

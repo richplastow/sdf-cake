@@ -22,7 +22,7 @@ type: plan
   choreography, on [Plan 04](./04-topping.md)'s
   toppingSurfaceHeight() in `docs/src/sdf/topping.js`, and on
   [Plan 03](./03-frame-budget.md)'s bounding cylinders; feeds
-  [Plan 07](../todo/07-sliders.md), whose reveal slider removes the decorations
+  [Plan 07](./07-sliders.md), whose reveal slider removes the decorations
   first.
 - Needed because the recipes already list their decorations, and the
   brief's transitions end with them.

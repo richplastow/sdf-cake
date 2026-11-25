@@ -142,7 +142,9 @@ export const RECIPES = [
       { kind: "candle", count: 5, color: "#9ecbf0" },
       { kind: "sprinkle", count: 80, color: null },
     ],
-    eaten: { steps: 6, minFraction: 0.12, maxFraction: 0.8 },
+    // Every step's cut lines clear the candles, as placeDecorations() sets
+    // them, by at least 1.5 mm.
+    eaten: { steps: 6, minFraction: 0.15, maxFraction: 0.67 },
   },
   {
     id: "cheesecake",
@@ -185,7 +187,7 @@ export const RECIPES = [
       translucency: 0.7,
     },
     decorations: [],
-    eaten: { steps: 200, minFraction: 0, maxFraction: 1 },
+    eaten: { steps: 6, minFraction: 0, maxFraction: 1 },
   },
   {
     id: "custard-pie",

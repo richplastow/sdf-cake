@@ -19,6 +19,10 @@
      between the arrow buttons for the controls that go between them */
   --controls-inset: 1.5rem;
   --controls-offset: 1.5rem; /* the toolbar's from the viewport's bottom */
+  --controls-fade-duration: 200ms; /* Escape's fade out and back in */
+  --eaten-length: 40vw; /* the eaten slider's length, at least 12rem */
+  --eaten-min-length: 12rem;
+  --reveal-length: 40vh; /* the reveal slider's length, up the right */
   /* the page's colour, showing through the transparent canvas: a light grey
      on the light page, and the system's own on the dark page */
   --page-color: light-dark(#f0f0f0, Canvas);
@@ -76,7 +80,8 @@ body {
  * Fixed, and later in the document, so it paints over the canvas. Its box
  * spans the viewport's width, so the pointer passes through it, and only
  * its controls, the direct children, take it. The arrow buttons sit at its
- * two ends.
+ * two ends, with the eaten slider centred between them; the reveal slider
+ * is fixed up the right side, out of the bar's flow.
  */
 .controls {
   position: fixed;
@@ -88,10 +93,44 @@ body {
   gap: var(--controls-gap);
   padding-inline: var(--controls-inset);
   pointer-events: none;
+  transition: opacity var(--controls-fade-duration);
 }
 
-.controls > * {
+.controls:not([data-hidden]) > * {
   pointer-events: auto;
+}
+
+/*
+ * The hidden controls, toggled by Escape in src/ui/controls-toggle.js:
+ * transparent, and passed through by the pointer to the canvas, but still
+ * within keyboard reach, which `visibility`, `display` or `inert` would
+ * end.
+ */
+.controls[data-hidden] {
+  opacity: 0;
+}
+
+/* The eaten slider, along the bottom between the arrow buttons. */
+.eaten-slider {
+  inline-size: max(var(--eaten-length), var(--eaten-min-length));
+  margin: 0;
+}
+
+/*
+ * The reveal slider, centred up the right side. A vertical writing mode
+ * lays the range input on its side, and a right-to-left direction puts
+ * its greatest value, the whole cake, at the top, as MDN's "Creating vertical
+ * form controls" sets out; its inline size is then its height.
+ */
+.reveal-slider {
+  position: fixed;
+  top: 50%;
+  right: var(--controls-inset);
+  inline-size: var(--reveal-length);
+  margin: 0;
+  translate: 0 -50%;
+  writing-mode: vertical-lr;
+  direction: rtl;
 }
 
 /*

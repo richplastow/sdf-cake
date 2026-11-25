@@ -26,7 +26,7 @@ type: plan
   [Plan 03](03-frame-budget.md)'s two bounding cylinders, which
   its Decision 3 says this plan derives each frame; feeds
   [Plan 06](./06-decorations.md), which adds the decorations' sink and fall
-  to the choreography, and [Plan 07](../todo/07-sliders.md), which puts the
+  to the choreography, and [Plan 07](./07-sliders.md), which puts the
   eaten slider between the arrow buttons.
 - Needed because the brief's cakes blend by tweening one recipe shape, and
   nothing animates a uniform yet.

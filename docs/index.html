@@ -32,22 +32,42 @@
         class="cake-arrow"
         type="button"
         data-walk="previous"
-        aria-label="Previous cake"
+        aria-label="Previous"
       >
         <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
           <path d="M15 5l-7 7 7 7" />
         </svg>
       </button>
+      <input
+        class="eaten-slider"
+        type="range"
+        min="0"
+        max="0"
+        step="1"
+        value="0"
+        aria-label="Eaten"
+        data-slider="eaten"
+      />
       <button
         class="cake-arrow"
         type="button"
         data-walk="next"
-        aria-label="Next cake"
+        aria-label="Next"
       >
         <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
           <path d="M9 5l7 7-7 7" />
         </svg>
       </button>
+      <input
+        class="reveal-slider"
+        type="range"
+        min="0"
+        max="0"
+        step="1"
+        value="0"
+        aria-label="Reveal"
+        data-slider="reveal"
+      />
     </div>
   </body>
 </html>

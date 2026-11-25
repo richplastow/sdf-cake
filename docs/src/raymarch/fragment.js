@@ -432,10 +432,12 @@ export const raymarchFragmentShader = /* glsl */ `
       1.0,
       saturate(dot(normal, -direction))
     );
+    // Scale the light from beneath by the translucency too, so a topping
+    // whose translucency springs towards 0 fades smoothly to opaque.
     return topping.directSpecular + topping.indirectSpecular +
       (1.0 - toppingTranslucency) *
         (topping.directDiffuse + topping.indirectDiffuse) +
-      (1.0 - fresnel) * transmittance * beneathLight;
+      toppingTranslucency * (1.0 - fresnel) * transmittance * beneathLight;
   }
 
   void main() {

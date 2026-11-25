@@ -16,7 +16,7 @@ type: plan
   from Inigo Quilez's [fbm SDF](https://iquilezles.org/articles/fbmsdf/),
   [smooth minimum](https://iquilezles.org/articles/smin/) and
   [domain repetition](https://iquilezles.org/articles/sdfrepetition/).
-- Depends on [Plan 07](07-sliders.md), so the cut and the reveal expose
+- Depends on [Plan 07](../done/07-sliders.md), so the cut and the reveal expose
   every face the crumb shows on; feeds nothing: it completes the field.
 - Needed because the brief's sponge is pitted and studded, and every cut
   face is smooth today.
