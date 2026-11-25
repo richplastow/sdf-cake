@@ -237,14 +237,17 @@ export const createCakeUniforms = () => ({
   decorationCount: { value: 0 },
   decorationEmbedsMeters: { value: new Float32Array(DECORATION_SLOTS) },
   decorationKinds: { value: new Float32Array(DECORATION_SLOTS) },
-  // Three numbers a slot, x, the offset in height and z, in metres.
-  decorationOffsets: { value: new Float32Array(3 * DECORATION_SLOTS) },
+  // Four numbers a slot: x, the offset in height and z, in metres, and its
+  // flame, 0 out to 1 lit.
+  decorationOffsets: { value: new Float32Array(4 * DECORATION_SLOTS) },
   decorationRoughnesses: { value: new Float32Array(DECORATION_SLOTS) },
   // Nine numbers a slot, its mat3 in column-major order, which r187's
   // WebGLUniforms passes to uniformMatrix3fv unchanged.
   decorationRotations: { value: new Float32Array(9 * DECORATION_SLOTS) },
   decorationScales: { value: new Float32Array(DECORATION_SLOTS) },
   eatenAngleRadians: { value: 0 },
+  // The flames' flicker clock, in seconds, which src/main.js advances.
+  flameSeconds: { value: 0 },
   layerBottomRadiiMeters: { value: new Float32Array(LAYER_SLOTS) },
   layerBottomsMeters: { value: new Float32Array(LAYER_SLOTS) },
   layerColors: {
@@ -396,8 +399,9 @@ export const writeCakeUniforms = (uniforms, values) => {
 };
 
 /** #### Copies the decorations' values into their uniforms, in place
- * - Each slot's offset holds its x, its animated height offset and its z;
- *   its scale, the hash's times the animation's, is clamped at 0.
+ * - Each slot's offset holds its x, its animated height offset, its z and
+ *   its flame, 0 out to 1 lit; its scale, the hash's times the
+ *   animation's, is clamped at 0.
  * - Allocates nothing.
  */
 const writeDecorationUniforms = (uniforms, decorations) => {
@@ -409,9 +413,10 @@ const writeDecorationUniforms = (uniforms, decorations) => {
     setColor(uniforms.decorationColors.value[slot], item.color);
     uniforms.decorationEmbedsMeters.value[slot] = item.embedMeters;
     uniforms.decorationKinds.value[slot] = item.kindId;
-    offsets[3 * slot] = item.xMeters;
-    offsets[3 * slot + 1] = item.offsetMeters;
-    offsets[3 * slot + 2] = item.zMeters;
+    offsets[4 * slot] = item.xMeters;
+    offsets[4 * slot + 1] = item.offsetMeters;
+    offsets[4 * slot + 2] = item.zMeters;
+    offsets[4 * slot + 3] = item.flame;
     uniforms.decorationRoughnesses.value[slot] = item.roughness;
     for (let index = 0; index < 9; index++) {
       rotations[9 * slot + index] = item.rotation[index];

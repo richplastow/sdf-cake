@@ -123,6 +123,20 @@ export const MATERIALS = {
     holeStrength: 0,
     holeCellMeters: 0,
   },
+  lightBluePaper: {
+    color: "#9ec8ec",
+    roughness: 0.9,
+    metalness: 0,
+    holeStrength: 0,
+    holeCellMeters: 0,
+  },
+  redChina: {
+    color: "#c62b2b",
+    roughness: 0.15,
+    metalness: 0,
+    holeStrength: 0,
+    holeCellMeters: 0,
+  },
   foil: {
     color: "#c9c9cc",
     roughness: 0.3,

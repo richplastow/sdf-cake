@@ -68,6 +68,10 @@ const CAMERA_ELEVATION_RADIANS = MathUtils.degToRad(22); // above the table
 const CAMERA_FAR_METERS = 10;
 const CAMERA_FOV_DEGREES = 35; // vertical; Three.js takes degrees
 const CAMERA_NEAR_METERS = 0.01;
+// Where the flames' flicker clock wraps back to 0, in seconds, so a 32-bit
+// float in the shader keeps its precision: a one-frame jump in the
+// flicker's phase once an hour.
+const FLAME_CLOCK_WRAP_SECONDS = 3600;
 // How much larger than the sphere round the cake the camera fits,
 // unitless, so the cake never touches the view's edge.
 const FIT_MARGIN = 1.15;
@@ -419,6 +423,13 @@ renderer.setAnimationLoop((timestampMs) => {
     const turnRadians =
       IDLE_TURN_RADIANS_PER_SECOND * s * s * (3 - 2 * s) * deltaSeconds;
     idleYawRadians = (idleYawRadians - turnRadians) % FULL_TURN_RADIANS;
+  }
+  // The flames flicker even while the cake is held, and stand still under
+  // reduced motion, as the cake does.
+  if (!reducedMotion.matches) {
+    const flameSeconds = quad.material.uniforms.flameSeconds;
+    flameSeconds.value =
+      (flameSeconds.value + deltaSeconds) % FLAME_CLOCK_WRAP_SECONDS;
   }
   stepCakeMotion(motion, deltaSeconds);
   writeCakeUniforms(quad.material.uniforms, motion.values);

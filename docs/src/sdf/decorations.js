@@ -21,7 +21,9 @@ import { DECORATION_SLOTS } from "../cake/slots.js";
  *   uniform declared before it.
  * - decorationsField() returns the distance in metres, negative inside an
  *   item, and its material id: a slot's, `MATERIAL_SLOT_FIRST` plus its
- *   index, 16 to 39, a sprinkle's 48 or a flake's 49. It leaves out the
+ *   index, 16 to 39, a sprinkle's 48, a flake's 49, a candle's wick's
+ *   `MATERIAL_WICK_FIRST` plus its slot, 64 to 87, or its flame's
+ *   `MATERIAL_FLAME_FIRST` plus its slot, 96 to 119. It leaves out the
  *   slot it is given, so a ray refracted into a translucent item can
  *   march to the part beneath.
  * - Each item stands on toppingSurfaceHeight() at its radius, less its
@@ -30,16 +32,23 @@ import { DECORATION_SLOTS } from "../cake/slots.js";
  * - decorationAlbedoOf() and decorationRoughnessOf() map a decoration's
  *   material id to its surface; a sprinkle's colour is found again from
  *   the point, by its cell's hash.
+ * - A candle carries a wick and a flame in its own frame, so they tilt
+ *   with it. The flame, an emissive ellipsoid that lights nothing,
+ *   flickers on its slot's own hashed timeline from `flameSeconds`, and
+ *   flameRadianceAt() gives the light it emits.
  */
 export const decorationsChunk = /* glsl */ `
   uniform vec3 decorationColors[${DECORATION_SLOTS}];
   uniform int decorationCount;
   uniform float decorationEmbedsMeters[${DECORATION_SLOTS}];
   uniform float decorationKinds[${DECORATION_SLOTS}];
-  uniform vec3 decorationOffsets[${DECORATION_SLOTS}];
+  // x, the animated height offset and z, in metres, and the flame, 0 out
+  // to 1 lit.
+  uniform vec4 decorationOffsets[${DECORATION_SLOTS}];
   uniform float decorationRoughnesses[${DECORATION_SLOTS}];
   uniform mat3 decorationRotations[${DECORATION_SLOTS}];
   uniform float decorationScales[${DECORATION_SLOTS}];
+  uniform float flameSeconds; // the flicker clock, in seconds
   uniform float scatterCellMeters;
   uniform vec3 scatterColor;
   uniform float scatterKind;
@@ -54,10 +63,44 @@ export const decorationsChunk = /* glsl */ `
   // How far below the topping's base the decorations' slab reaches, in
   // metres: past it, a sinking item is inside the cake and is not drawn.
   const float DECORATION_SLAB_BELOW_METERS = 0.01;
-  // The materials: a slot's id is MATERIAL_SLOT_FIRST plus its index.
+  // The materials: a slot's id is MATERIAL_SLOT_FIRST plus its index, and
+  // a candle's wick's and flame's are MATERIAL_WICK_FIRST and
+  // MATERIAL_FLAME_FIRST plus its slot, above the inclusions' 50 to 52.
   const float MATERIAL_FLAKE = 49.0;
+  const float MATERIAL_FLAME_FIRST = 96.0;
   const float MATERIAL_SLOT_FIRST = 16.0;
   const float MATERIAL_SPRINKLE = 48.0;
+  const float MATERIAL_WICK_FIRST = 64.0;
+  const int CANDLE_KIND = ${kindNamed("candle").id};
+  // The candle's half height at scale 1, in metres, where its wick stands.
+  const float CANDLE_HALF_HEIGHT_METERS = ${toGlslFloat(
+    halfHeightOf(kindNamed("candle")),
+  )};
+  // The wick: a black capped cylinder on the candle's top, in metres.
+  const float WICK_HEIGHT_METERS = 0.006;
+  const float WICK_RADIUS_METERS = 0.0005;
+  const float WICK_ROUGHNESS = 0.9;
+  const vec3 WICK_COLOR = ${linearColorOf("#1a1410")};
+  // The flame: an ellipsoid on the wick's top, its semi-axes in metres at
+  // full flame, and the light it emits, linear, before tone mapping, from
+  // its base's colour to its tip's. First guesses, to tune by eye.
+  const float FLAME_HALF_HEIGHT_METERS = 0.006;
+  const float FLAME_RADIANCE = 2.5;
+  const float FLAME_RADIUS_METERS = 0.0025;
+  const vec3 FLAME_BASE_COLOR = ${linearColorOf("#fff3c4")};
+  const vec3 FLAME_TIP_COLOR = ${linearColorOf("#ff8c1a")};
+  // The flicker: a shimmer in height of FLICKER_AMPLITUDE, unitless, at
+  // FLICKER_RATE_HERTZ, less a brief dip of GUTTER_DEPTH, unitless, about
+  // every cycle at GUTTER_RATE_HERTZ, sharpened by GUTTER_SHARPNESS, a
+  // power, and a sway of FLAME_SWAY_METERS. Each slot's rate varies by up
+  // to FLICKER_RATE_VARY either way, unitless.
+  const float FLAME_SWAY_METERS = 0.0012;
+  const float FLICKER_AMPLITUDE = 0.12;
+  const float FLICKER_RATE_HERTZ = 9.0;
+  const float FLICKER_RATE_VARY = 0.15;
+  const float GUTTER_DEPTH = 0.35;
+  const float GUTTER_RATE_HERTZ = 1.3;
+  const float GUTTER_SHARPNESS = 8.0;
   // A shift of the cell indices, in cells, so they hash as unsigned
   // integers, never negative.
   const float SCATTER_CELL_SHIFT = 1024.0;
@@ -168,6 +211,87 @@ export const decorationsChunk = /* glsl */ `
     return nearest;
   }
 
+  // A slot's item's centre, in metres: on toppingSurfaceHeight() at its
+  // radius, less its embed, raised by its animated offset.
+  vec3 decorationCenterOf(int slot, int kind, float scale) {
+    vec4 offset = decorationOffsets[slot];
+    float halfHeight = DECORATION_HALF_HEIGHTS_METERS[kind] * scale;
+    return vec3(
+      offset.x,
+      toppingSurfaceHeight(length(offset.xz)) - decorationEmbedsMeters[slot] +
+        halfHeight + offset.y,
+      offset.z
+    );
+  }
+
+  // A candle's flame in its frame at scale 1: xyz its centre and w its
+  // half height, both in metres; its radius is FLAME_RADIUS_METERS times
+  // the flame, and its base stays on the wick's top. Its phase and rate
+  // come from lowbias32() of the slot, so no two flicker together, and
+  // every axis scales by the flame, 0 out to 1 lit.
+  vec4 flameShapeOf(int slot, float flame) {
+    uint hash = lowbias32(uint(slot) + 1u);
+    float phase = 2.0 * PI * unitOfHash(hash);
+    float rate = 1.0 + FLICKER_RATE_VARY *
+      (2.0 * unitOfHash(nextHash(hash)) - 1.0);
+    float seconds = flameSeconds * rate;
+    float flicker = 2.0 * PI * FLICKER_RATE_HERTZ * seconds + phase;
+    float gutter = 2.0 * PI * GUTTER_RATE_HERTZ * seconds + phase;
+    float height = 1.0 + FLICKER_AMPLITUDE * sin(flicker) -
+      GUTTER_DEPTH * pow(max(sin(gutter), 0.0), GUTTER_SHARPNESS);
+    float halfHeight = FLAME_HALF_HEIGHT_METERS * height * flame;
+    return vec4(
+      FLAME_SWAY_METERS * cos(flicker),
+      CANDLE_HALF_HEIGHT_METERS + WICK_HEIGHT_METERS + halfHeight,
+      FLAME_SWAY_METERS * cos(gutter),
+      halfHeight
+    );
+  }
+
+  // The nearest of a candle's wick and flame to p, in its frame at scale
+  // 1: x the distance in metres and y the material id. A flame at 0 is
+  // skipped and costs nothing.
+  vec2 candleCrownDistance(vec3 p, int slot, float flame) {
+    vec3 wickPoint = p -
+      vec3(0.0, CANDLE_HALF_HEIGHT_METERS + 0.5 * WICK_HEIGHT_METERS, 0.0);
+    vec2 nearest = vec2(
+      cappedCylinderDistance(
+        wickPoint,
+        0.5 * WICK_HEIGHT_METERS,
+        WICK_RADIUS_METERS
+      ),
+      MATERIAL_WICK_FIRST + float(slot)
+    );
+    if (flame <= 0.0) return nearest;
+    vec4 shape = flameShapeOf(slot, flame);
+    float radius = FLAME_RADIUS_METERS * flame;
+    float d = ellipsoidDistance(
+      p - shape.xyz,
+      vec3(radius, shape.w, radius)
+    );
+    if (d < nearest.x) nearest = vec2(d, MATERIAL_FLAME_FIRST + float(slot));
+    return nearest;
+  }
+
+  // The light a flame emits at the point hit, linear, before tone mapping:
+  // FLAME_RADIANCE times a mix from its base's colour to its tip's by the
+  // point's height in it. It is not shaded and lights nothing.
+  vec3 flameRadianceAt(float materialId, vec3 point) {
+    int slot = int(materialId - MATERIAL_FLAME_FIRST + 0.5);
+    float scale = decorationScales[slot];
+    vec3 center = decorationCenterOf(slot, CANDLE_KIND, scale);
+    // A flame is hit only at a scale and a flame above 0, and its half
+    // height never falls below half its full one, so neither divides by 0.
+    vec3 local = (point - center) * decorationRotations[slot] / scale;
+    vec4 shape = flameShapeOf(slot, decorationOffsets[slot].w);
+    float height = clamp(
+      (local.y - shape.y + shape.w) / (2.0 * shape.w),
+      0.0,
+      1.0
+    );
+    return FLAME_RADIANCE * mix(FLAME_BASE_COLOR, FLAME_TIP_COLOR, height);
+  }
+
   // The field of the decorations: x is the distance in metres, negative
   // inside an item, and y its material id. They are evaluated only within
   // a slab from DECORATION_SLAB_BELOW_METERS below the topping's base up
@@ -193,24 +317,25 @@ export const decorationsChunk = /* glsl */ `
       float scale = decorationScales[i];
       if (scale <= 0.0 || i == hiddenSlot) continue;
       int kind = int(decorationKinds[i] + 0.5);
-      vec3 offset = decorationOffsets[i];
+      vec4 offset = decorationOffsets[i];
       float reach = DECORATION_REACHES_METERS[kind] * scale;
       if (length(p.xz - offset.xz) - reach >= nearest.x) continue;
 
-      float halfHeight = DECORATION_HALF_HEIGHTS_METERS[kind] * scale;
-      vec3 centre = vec3(
-        offset.x,
-        toppingSurfaceHeight(length(offset.xz)) - decorationEmbedsMeters[i] +
-          halfHeight + offset.y,
-        offset.z
-      );
-      vec3 toPoint = p - centre;
+      vec3 toPoint = p - decorationCenterOf(i, kind, scale);
       if (length(toPoint) - reach >= nearest.x) continue;
-      float d = decorationKindDistance(
-        kind,
-        toPoint * decorationRotations[i] / scale
-      ) * scale;
-      if (d < nearest.x) nearest = vec2(d, MATERIAL_SLOT_FIRST + float(i));
+      vec3 local = toPoint * decorationRotations[i] / scale;
+      vec2 item = vec2(
+        decorationKindDistance(kind, local),
+        MATERIAL_SLOT_FIRST + float(i)
+      );
+      // A candle's wick and flame need its slot, for the flame and its
+      // timeline, so they are drawn here rather than by its kind.
+      if (kind == CANDLE_KIND) {
+        vec2 crown = candleCrownDistance(local, i, offset.w);
+        if (crown.x < item.x) item = crown;
+      }
+      item.x *= scale;
+      if (item.x < nearest.x) nearest = item;
     }
 
     if (scatterKind > 0.5 && scatterScale > 0.0) {
@@ -226,8 +351,12 @@ export const decorationsChunk = /* glsl */ `
   }
 
   // A decoration's albedo, from its material id and the point hit: a
-  // slot's colour, a sprinkle's by its cell's hash, or the flakes'.
+  // flame's base colour, a wick's, a slot's colour, a sprinkle's by its
+  // cell's hash, or the flakes'. A flame is only shaded beneath a
+  // translucent part; main() gives a direct hit flameRadianceAt().
   vec3 decorationAlbedoOf(float materialId, vec3 point) {
+    if (materialId > MATERIAL_FLAME_FIRST - 0.5) return FLAME_BASE_COLOR;
+    if (materialId > MATERIAL_WICK_FIRST - 0.5) return WICK_COLOR;
     if (materialId < MATERIAL_SPRINKLE - 0.5) {
       return decorationColors[int(materialId - MATERIAL_SLOT_FIRST + 0.5)];
     }
@@ -240,9 +369,10 @@ export const decorationsChunk = /* glsl */ `
     return scatterColor;
   }
 
-  // A decoration's roughness, from its material id: a slot's own, or the
-  // scattered kind's.
+  // A decoration's roughness, from its material id: a wick's, which a
+  // flame shares, a slot's own, or the scattered kind's.
   float decorationRoughnessOf(float materialId) {
+    if (materialId > MATERIAL_WICK_FIRST - 0.5) return WICK_ROUGHNESS;
     if (materialId < MATERIAL_SPRINKLE - 0.5) {
       return decorationRoughnesses[
         int(materialId - MATERIAL_SLOT_FIRST + 0.5)

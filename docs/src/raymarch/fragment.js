@@ -479,6 +479,16 @@ export const raymarchFragmentShader = /* glsl */ `
     if (!hit.isHit) discard;
 
     vec3 hitPoint = rayOrigin + rayDirection * hit.distanceMeters;
+
+    // A flame emits its own light, after the lights as Three.js adds
+    // totalEmissiveRadiance, and is neither shaded nor reads a normal.
+    if (hit.materialId > MATERIAL_FLAME_FIRST - 0.5) {
+      gl_FragColor = vec4(flameRadianceAt(hit.materialId, hitPoint), 1.0);
+      #include <tonemapping_fragment>
+      #include <colorspace_fragment>
+      return;
+    }
+
     vec3 hitNormal = normalAt(hitPoint, HIDE_NONE);
     ReflectedLight reflectedLight = shadeAt(
       hit.materialId,

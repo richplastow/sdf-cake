@@ -8,7 +8,11 @@
  * nothing here imports from `three`, so Node can run it.
  */
 
-import { DECORATION_KINDS, greatestHeightMeters } from "../cake/place.js";
+import {
+  DECORATION_KINDS,
+  greatestHeightMeters,
+  kindNamed,
+} from "../cake/place.js";
 import { writeCakeBounds } from "../cake/resolve.js";
 import { DECORATION_SLOTS, LAYER_SLOTS } from "../cake/slots.js";
 import {
@@ -31,6 +35,12 @@ const DROP_SECONDS = 0.45;
 // How long after a reveal stop brings the decorations back the first one
 // drops, in seconds: a first guess, to tune by eye.
 const REVEAL_DROP_DELAY_SECONDS = 0.15;
+// How long a candle's flame takes to go out once its sink starts, and to
+// light once its cue after landing comes, in seconds, and the span of time
+// over which the candles' hashed cues scatter, in seconds.
+const FLAME_IN_SECONDS = 0.15;
+const FLAME_OUT_SECONDS = 0.08;
+const FLAME_SCATTER_SECONDS = 0.5;
 // How long the drips take to run down once the layers settle, in seconds.
 const DRIP_RUN_SECONDS = 0.6;
 // How long the drips take to draw back up when a transition starts, in
@@ -87,6 +97,9 @@ const PLATE_SURFACE_KEYS = ["metalness", "roughness"];
 const TOPPING_LENGTH_KEYS = ["pileMeters", "roundingMeters", "thicknessMeters"];
 const TOPPING_SURFACE_KEYS = ["roughness", "translucency"];
 
+// The kind whose items carry a flame.
+const CANDLE_KIND_ID = kindNamed("candle").id;
+
 // The drips' phases: at their target, drawing back up, at 0 waiting for
 // the layers to settle, and running down.
 const DRIPS_RESTING = "resting";
@@ -110,7 +123,8 @@ const ITEM_WAITING = "waiting";
  *   the bounds derived from the layers, which at rest equal the
  *   resolver's.
  * - `values.decorations` holds `DECORATION_SLOTS` items and the scatter,
- *   each with its animated `offsetMeters` and `scale`, the `count` of
+ *   each with its animated `offsetMeters`, `scale` and `flame`, 0 out to
+ *   1 lit, which only a candle's lights; the `count` of
  *   slots in use, the greatest drop offset above rest, `liftMeters`, and
  *   the tallest present kind's height, `reachMeters`. The cake's own
  *   decorations stand at rest.
@@ -192,7 +206,8 @@ export const createCakeMotion = (cake) => {
 
 /** #### Starts the motion towards another resolved cake, from where it is
  * - At once, every present decoration sinks from where it is, each
- *   `SLOT_STAGGER_SECONDS` after the last and the scatter last, and any
+ *   `SLOT_STAGGER_SECONDS` after the last, a candle at its own cue, and
+ *   the scatter last, and any
  *   drop still pending is cancelled. The body retargets
  *   `BODY_DELAY_SECONDS` later, and the new cake's decorations are placed
  *   and drop from `DROP_DELAY_SECONDS`, the scatter last.
@@ -501,6 +516,9 @@ const createItem = () => ({
   color: { r: 0, g: 0, b: 0 },
   delaySeconds: 0,
   embedMeters: 0,
+  flame: 0,
+  flameCueSeconds: 0,
+  fromFlame: 0,
   fromMeters: 0,
   fromScale: 0,
   heightMeters: 0,
@@ -551,6 +569,8 @@ const createPart = (resolved, lengthKeys, surfaceKeys, partValues) => {
  * - To drop, each item waits at `DROP_HEIGHT_METERS` above its rest until
  *   `dropDelaySeconds` after the change, plus `SLOT_STAGGER_SECONDS` per
  *   slot before it; the scatter waits for every slot.
+ * - A candle placed at rest is lit at once; one placed to drop is unlit
+ *   until its cue after landing, its share of `FLAME_SCATTER_SECONDS`.
  */
 const installDecorations = (
   decorations,
@@ -579,6 +599,8 @@ const installDecorations = (
     for (let index = 0; index < COLOR_CHANNELS.length; index++) {
       item.color[COLOR_CHANNELS[index]] = channelOfHex(placed.color, index);
     }
+    item.flameCueSeconds = FLAME_SCATTER_SECONDS * placed.cueFraction;
+    item.flame = isAtRest && placed.kindId === CANDLE_KIND_ID ? 1 : 0;
     placeItemState(
       item,
       kind,
@@ -595,6 +617,7 @@ const installDecorations = (
     return;
   }
   item.cellMeters = scatter.cellMeters;
+  item.flame = 0;
   item.kindId = scatter.kindId;
   for (let index = 0; index < COLOR_CHANNELS.length; index++) {
     item.color[COLOR_CHANNELS[index]] = channelOfHex(scatter.color, index);
@@ -733,18 +756,32 @@ const snapSpring = (spring) => {
 };
 
 /** #### Starts every present decoration sinking from where it is
- * - Each slot starts `SLOT_STAGGER_SECONDS` after the last present one,
- *   the scatter last; an item still waiting to drop is emptied.
+ * - Each slot starts `SLOT_STAGGER_SECONDS` after the last present one, but
+ *   a candle starts at its cue, its share of `FLAME_SCATTER_SECONDS`; the
+ *   scatter starts last of all. An item still waiting to drop is emptied.
  * - Allocates nothing.
  */
 const sinkDecorations = (decorations) => {
   let order = 0;
+  let lastDelaySeconds = -SLOT_STAGGER_SECONDS;
   for (let slot = 0; slot < DECORATION_SLOTS; slot++) {
-    if (sinkItem(decorations.items[slot], order * SLOT_STAGGER_SECONDS)) {
+    const item = decorations.items[slot];
+    const delaySeconds =
+      item.kindId === CANDLE_KIND_ID
+        ? item.flameCueSeconds
+        : order * SLOT_STAGGER_SECONDS;
+    if (sinkItem(item, delaySeconds)) {
       order++;
+      lastDelaySeconds = Math.max(lastDelaySeconds, delaySeconds);
     }
   }
-  sinkItem(decorations.scatter, order * SLOT_STAGGER_SECONDS);
+  sinkItem(
+    decorations.scatter,
+    Math.max(
+      order * SLOT_STAGGER_SECONDS,
+      lastDelaySeconds + SLOT_STAGGER_SECONDS,
+    ),
+  );
 };
 
 /** #### Starts one item sinking from where it is, after a delay
@@ -758,6 +795,7 @@ const sinkItem = (item, delaySeconds) => {
     return false;
   }
   item.delaySeconds = delaySeconds;
+  item.fromFlame = item.flame;
   item.fromMeters = item.offsetMeters;
   item.fromScale = item.scale;
   item.phase = ITEM_SINKING;
@@ -836,6 +874,10 @@ const stepDecorations = (decorations, changeSeconds) => {
  * - Waiting, it starts its drop at its delay. Dropping, it falls from
  *   `DROP_HEIGHT_METERS` above its rest as under gravity, eased in, over
  *   `DROP_SECONDS`, and then rests.
+ * - A candle's flame goes out linearly from where it was over
+ *   `FLAME_OUT_SECONDS` from its sink's start, and an unlit candle at rest
+ *   lights linearly over `FLAME_IN_SECONDS` from its cue after landing.
+ *   Both are timed from the change, so a long frame skips ahead.
  * - Allocates nothing.
  */
 const stepItem = (item, changeSeconds) => {
@@ -846,7 +888,10 @@ const stepItem = (item, changeSeconds) => {
     item.offsetMeters =
       item.fromMeters - SINK_DEPTH_FACTOR * item.heightMeters * eased;
     item.scale = item.fromScale * (1 - progress * progress);
+    item.flame =
+      item.fromFlame * (1 - clampUnit(elapsedSeconds / FLAME_OUT_SECONDS));
     if (progress >= 1) {
+      item.flame = 0;
       item.phase = ITEM_EMPTY;
       item.scale = 0;
     }
@@ -863,6 +908,14 @@ const stepItem = (item, changeSeconds) => {
       item.offsetMeters = 0;
       item.phase = ITEM_RESTING;
     }
+  }
+  if (
+    item.phase === ITEM_RESTING &&
+    item.kindId === CANDLE_KIND_ID &&
+    item.flame < 1
+  ) {
+    const litSeconds = elapsedSeconds - DROP_SECONDS - item.flameCueSeconds;
+    item.flame = clampUnit(litSeconds / FLAME_IN_SECONDS);
   }
 };
 

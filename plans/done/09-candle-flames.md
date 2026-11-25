@@ -9,16 +9,16 @@ type: plan
 - Delivers lit candles: a black wick on each candle, a flickering flame
   on each wick that is not a light source, lit shortly after the candle
   lands and put out as it sinks, with no two candles in step.
-- Extends [Plan 06](../done/06-decorations.md)'s candle kind, its slots and
+- Extends [Plan 06](./06-decorations.md)'s candle kind, its slots and
   its sink and drop, and shades the flame as an emissive term outside
   Three.js's lighting, as `meshphysical.glsl.js` adds
   `totalEmissiveRadiance` after the lights
   ([r187 source](https://raw.githubusercontent.com/mrdoob/three.js/r187/src/renderers/shaders/ShaderLib/meshphysical.glsl.js)).
   The flame is iq's [ellipsoid](https://iquilezles.org/articles/distfunctions/),
   a bound as Plan 06 notes.
-- Depends on [Plan 08](../done/08-crumb.md), which is changing
-  `docs/src/sdf/cake.js`, `docs/src/raymarch/fragment.js` and
-  `docs/src/motion/cake-motion.js` as this plan is drafted; feeds nothing.
+- Depends on [Plan 08](./08-crumb.md), done: its inclusions take
+  material ids 50 to 52, found from the point hit inside a layer and
+  never returned by the field; feeds nothing.
 - Needed because the chocolate cake's candles stand unlit, and a
   birthday cake's candles burn.
 
@@ -57,8 +57,8 @@ type: plan
    the camera's fit of Plan 06's Decision 10 cover the flame, and the
    reach test skips no flame. A kind without the field has a crown of 0.
 5. **The flicker** runs in the shader from one uniform, `flameSeconds`,
-   which `main.js` advances by the frame's delta, as it turns the cake,
-   and wraps at `FLAME_CLOCK_WRAP_SECONDS`, 3600, so a float stays
+   which `main.js` advances by the frame's delta, whether or not the
+   cake is held, and wraps at `FLAME_CLOCK_WRAP_SECONDS`, 3600, so a float stays
    precise; the wrap is a one-frame phase jump an hour in. Each
    candle's timeline is its own: a phase of a full turn and a rate
    factor between 1 − `FLICKER_RATE_VARY`, 0.15, and 1 + it, both from
@@ -92,13 +92,14 @@ type: plan
    so hiding the decorations puts the flames out and showing them lights
    them.
 8. **The item** in the motion gains `flame`, `fromFlame` and
-   `flameCueSeconds`, and the writer copies `flame` into the offsets'
-   fourth number. A candle a moment after landing:
+   `flameCueSeconds`, the slot's cue fraction times
+   `FLAME_SCATTER_SECONDS`, and the writer copies `flame` into the
+   offsets' fourth number. A candle a moment after landing:
 
    ```json
    {
      "flame": 0.4,
-     "flameCueSeconds": 1.87,
+     "flameCueSeconds": 0.16,
      "fromFlame": 0,
      "kindId": 2,
      "offsetMeters": 0,
@@ -113,7 +114,7 @@ type: plan
    a second field flag or a world-space branch in the march's innermost
    loop, and none reads as wrong at the view at load.
 10. **Performance** is measured on the chocolate cake, the only cake with
-    candles, by [Plan 03's frame-time snippet](../done/03-frame-budget.md#manual-qa)
+    candles, by [Plan 03's frame-time snippet](./03-frame-budget.md#manual-qa)
     against the live site, `https://richplastow.com/sdf-cake/#chocolate-drip`,
     at the same window size.
 
@@ -145,8 +146,10 @@ candle's distance returns the nearest of body, wick and flame with its
 part, decorationsField() maps the part to the slot's, the wick's or the
 flame's id, the albedo and roughness lookups take the new ranges, and
 flameRadianceAt() and the `flameSeconds` uniform are added;
-`docs/src/sdf/cake.js` per Decision 6, with the routing of ids 64 and
-up to the decorations' lookups; `docs/src/raymarch/fragment.js` so a
+`docs/src/sdf/cake.js` per Decision 6, with `flameSeconds` added to
+createCakeUniforms() (cakeAlbedoOf(), cakeRoughnessOf() and
+cakeMetalnessOf() already send every id above the topping's to the
+decorations, so only decorations.js's lookups learn the new ranges); `docs/src/raymarch/fragment.js` so a
 flame hit takes flameRadianceAt() per Decision 3; `docs/src/main.js` to
 advance and write `flameSeconds` per Decision 5. The flame is at 1 for
 every resting candle until Step 3 animates it.
@@ -183,10 +186,11 @@ landing, and `flame` written by `docs/src/sdf/cake.js`'s writer.
 
 **Agent QA**
 
-- Do: `node --input-type=module -e 'import { RECIPES } from "./docs/src/cake/recipes.js"; import { placeDecorations, placeScatter } from "./docs/src/cake/place.js"; import { resolveRecipe } from "./docs/src/cake/resolve.js"; import { createCakeMotion, retargetCakeMotion, stepCakeMotion } from "./docs/src/motion/cake-motion.js"; const cake = (i) => { const c = resolveRecipe(RECIPES[i]); c.decorations = { scatter: placeScatter(RECIPES[i]), slots: placeDecorations(RECIPES[i]) }; return c; }; const m = createCakeMotion(cake(1)); const items = () => m.values.decorations.items.slice(0, 5); const flames = () => items().map((i) => i.flame).join(","); const at = flames(); retargetCakeMotion(m, cake(3), { reducedMotion: false }); const delays = items().map((i) => i.delaySeconds); stepCakeMotion(m, 0.6); const out = flames(); retargetCakeMotion(m, cake(1), { reducedMotion: false }); stepCakeMotion(m, 1.2); stepCakeMotion(m, 1.3); console.log(at, "|", new Set(delays).size, delays.every((d) => d >= 0 && d < 0.5), "|", out, "|", flames());'`
+- Do: `node --input-type=module -e 'import { RECIPES } from "./docs/src/cake/recipes.js"; import { placeDecorations, placeScatter } from "./docs/src/cake/place.js"; import { resolveRecipe } from "./docs/src/cake/resolve.js"; import { createCakeMotion, retargetCakeMotion, stepCakeMotion } from "./docs/src/motion/cake-motion.js"; const cake = (i) => { const c = resolveRecipe(RECIPES[i]); c.decorations = { scatter: placeScatter(RECIPES[i]), slots: placeDecorations(RECIPES[i]) }; return c; }; const m = createCakeMotion(cake(1)); const items = () => m.values.decorations.items.slice(0, 5); const flames = () => items().map((i) => i.flame).join(","); const at = flames(); retargetCakeMotion(m, cake(3), { reducedMotion: false }); const delays = items().map((i) => i.delaySeconds); const cues = placeDecorations(RECIPES[1]).map((s) => 0.5 * s.cueFraction); stepCakeMotion(m, 0.6); const out = flames(); retargetCakeMotion(m, cake(1), { reducedMotion: false }); stepCakeMotion(m, 1.2); stepCakeMotion(m, 1.3); console.log(at, "|", new Set(delays).size, delays.every((d, i) => d >= 0 && d < 0.5 && Math.abs(d - cues[i]) < 1e-9), "|", out, "|", flames());'`
 - Expect: `1,1,1,1,1 | 5 true | 0,0,0,0,0 | 1,1,1,1,1`: lit at load, five
-  distinct sink cues within the scatter, all out 0.6 s into a change,
-  and all lit 2.5 s into the change back, past the last landing plus the
+  distinct sink cues within the scatter, each its slot's cue fraction
+  times `FLAME_SCATTER_SECONDS` rather than the slot stagger, all out
+  0.6 s into a change, and all lit 2.5 s into the change back, past the last landing plus the
   scatter and `FLAME_IN_SECONDS`.
 - Do: `node --check docs/src/motion/cake-motion.js && grep -c "FLAME_SCATTER_SECONDS\|FLAME_OUT_SECONDS\|FLAME_IN_SECONDS" docs/src/motion/cake-motion.js`
 - Expect: no parse error, and at least `3`.
@@ -282,3 +286,9 @@ a flame leans with its candle's tilt (Decision 9).
   one clock with a hashed phase and rate per slot, the flame packed into
   the offsets, and the sink and the landing cued by a hashed share of
   half a second, the flame out before the candle passes the topping.
+- **2026-11-25T23:26:44Z** — **reviewed**: claims checked against Plan 08's code (offsets a vec3 of x, height offset, z; 13 decoration uniforms; ids 50 to 52 never returned by the field) and Step 1's baseline run; Context's Plan 08 line updated, Step 2 names `flameSeconds` in createCakeUniforms() and notes the id routing already exists, Decision 5's clock runs while the cake is held, Step 3's Agent QA checks each sink delay equals its cue.
+- **2026-11-25T23:32:37Z** — **implemented**: Steps 1 to 3; touched `docs/src/cake/place.js`, `docs/src/sdf/decorations.js`, `docs/src/sdf/cake.js`, `docs/src/raymarch/fragment.js`, `docs/src/motion/cake-motion.js` and `docs/src/main.js`; every Agent QA block fails first as expected and passes after (`0.0706 0.0450 0.0198 0.0090`, `5 true 5 true`, `14`, `12`/`1`/`1`, `1,1,1,1,1 | 5 true | 0,0,0,0,0 | 1,1,1,1,1`, `10`); the wick and flame are drawn by candleCrownDistance() in decorationsField()'s slot loop rather than by the kind's distance; a candle's drop keeps the slot stagger and only its sink and its lighting take the cue; Decision 8's `flameCueSeconds` is the relative cue, so its example now reads 0.16, not 1.87; Manual QA unchanged.
+- **2026-11-25T23:32:37Z** — **verified**: agent checks pass: every module under `docs/src/` parses, no line over 80 columns in the six changed files, `/` and the six changed files served 200 by a server started and stopped for the check, vendored checksums match; browser not run.
+- **2026-11-25T23:35:33Z** — **quality-checked**: Fixed: `decorationCentreOf()` and its local `centre` in flameRadianceAt() renamed to `decorationCenterOf()` and `center`, since identifiers use American spelling (`docs/src/sdf/decorations.js`); no fix-tier bug found. Deferred: the flame's ellipsoid at a flame value within about 1e-10 of 0 can underflow to a distance of 0 for one frame, too rare a value of the linear fade to guard; `FLAME_RADIANCE` 2.5 and the flicker's per-step cost are for the browser QA (steps 2 and 9); boundingRadiusMeters() adds the crown only to non-box kinds, harmless while only the candle has one. Verified fine: GLSL names, declaration order, vec4 swizzles, the `CANDLE_HALF_HEIGHT_METERS` template (hoisted helpers), the flame branch's two `#include`s before `return`, material-id routing of 64 to 87 and 96 to 119 through cakeAlbedoOf(), cakeRoughnessOf() and cakeMetalnessOf(), the per-frame path (no allocation; `flameSeconds` wraps at 3600), sink and lighting timing in stepItem(), the crown in the reach and slab; every Agent QA block re-run and passing; agent checks pass; browser not run.
+- **2026-11-25T23:41:00Z** — **done**: the Lead Developer’s manual QA passed for the
+  flames; frame times for step 9 not reported.

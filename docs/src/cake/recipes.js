@@ -75,9 +75,9 @@ export const RECIPES = [
   {
     id: "chocolate-drip",
     plate: {
-      material: "china",
-      baseRadiusMeters: 0.105,
-      rimRadiusMeters: 0.13,
+      material: "redChina",
+      baseRadiusMeters: 0.088,
+      rimRadiusMeters: 0.104,
       sweepHeightMeters: 0.012,
       lipHeightMeters: 0.004,
       thicknessMeters: 0.005,
@@ -149,7 +149,7 @@ export const RECIPES = [
   {
     id: "cheesecake",
     plate: {
-      material: "paper",
+      material: "lightBluePaper",
       baseRadiusMeters: 0.1,
       rimRadiusMeters: 0.115,
       sweepHeightMeters: 0.006,
@@ -305,7 +305,16 @@ export const RECIPES = [
   },
   {
     id: "fruit-cake",
-    plate: null,
+    // A foil cake drum: flat and thick, with no sweep or lip, its edge
+    // rounded by the profile's stroke.
+    plate: {
+      material: "foil",
+      baseRadiusMeters: 0.12,
+      rimRadiusMeters: 0.125,
+      sweepHeightMeters: 0,
+      lipHeightMeters: 0,
+      thicknessMeters: 0.012,
+    },
     layers: [
       {
         material: "fruitCake",

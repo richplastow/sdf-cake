@@ -10,6 +10,9 @@
 // JAM_TRANSLUCENCY in src/cake/materials.js: a glacé cherry, mostly sugar
 // syrup, letting a little light through. A tuning value, not measured.
 const CHERRY_TRANSLUCENCY = 0.15;
+// How much of the candle stands above its body, in metres: the wick, 6 mm,
+// plus the flame at its tallest flicker, 12 mm times 1.12, rounded up.
+const CANDLE_CROWN_METERS = 0.02;
 const FULL_TURN_RADIANS = 2 * Math.PI;
 // A dried orange slice's translucency, on the same scale: a candied slice
 // lets a little light through, as the cherry does. A tuning value.
@@ -36,6 +39,9 @@ const TOP_INSET_FRACTION = 0.8;
  * - `translucency`, 0 opaque to 1 clear, lets a slot's item show the
  *   topping or sponge beneath it, as the jam does; a kind that leaves it
  *   out is opaque, 0. Only a slot's kind reads it, never a scattered one.
+ * - `crownMeters` is how far a kind's wick and flame stand above its body
+ *   at scale 1, which its greatest height and bounding radius add; a kind
+ *   that leaves it out has none, 0.
  */
 export const DECORATION_KINDS = [
   {
@@ -51,6 +57,7 @@ export const DECORATION_KINDS = [
     vary: 0.1,
   },
   {
+    crownMeters: CANDLE_CROWN_METERS,
     embed: 0.15,
     id: 2,
     isScattered: false,
@@ -129,9 +136,10 @@ export const SPRINKLE_PALETTE = [
  * - The hash is seeded by the cake's id, the kind's name, the item's index
  *   and the try, so a cake always places the same way.
  * @param recipe A recipe, as src/cake/recipes.js holds them.
- * @returns The slots, each its `color`, `embedMeters`, `footprintMeters`,
- *   `kindId`, `rotation` (nine numbers, column-major), `roughness`,
- *   `scale`, `xMeters` and `zMeters`.
+ * @returns The slots, each its `color`, `cueFraction` (0 up to 1, its share
+ *   of a scatter in time), `embedMeters`, `footprintMeters`, `kindId`,
+ *   `rotation` (nine numbers, column-major), `roughness`, `scale`,
+ *   `xMeters` and `zMeters`.
  */
 export const placeDecorations = (recipe) => {
   const crownRadiusMeters = crownTopRadiusMeters(recipe.layers);
@@ -189,14 +197,15 @@ export const placeScatter = (recipe) => {
 
 /** #### Gives the most a kind can stand above the surface, in metres
  * - Its height at its greatest size and tilt: its own height plus its
- *   widest horizontal reach, both ways, lifted by the tilt.
+ *   widest horizontal reach, both ways, lifted by the tilt, plus its crown.
  * @param kind A row of `DECORATION_KINDS`.
  * @returns The height, in metres.
  */
 export const greatestHeightMeters = (kind) =>
   (1 + kind.vary) *
   (kind.sizeMeters[1] +
-    2 * horizontalReachMeters(kind) * Math.sin(kind.tiltRadians));
+    2 * horizontalReachMeters(kind) * Math.sin(kind.tiltRadians) +
+    crownOf(kind));
 
 /** #### Gives the tallest of a recipe's decorations, in metres
  * @param decorations A recipe's decorations.
@@ -220,13 +229,17 @@ export const kindNamed = (name) =>
 
 /** #### Gives the radius of a kind's bounding sphere at scale 1, in metres
  * @param kind A row of `DECORATION_KINDS`.
- * @returns Half its greatest extent, or half the box's diagonal.
+ * @returns Half its greatest extent, or half the box's diagonal, plus its
+ *   crown.
  */
 export const boundingRadiusMeters = (kind) => {
   const [x, y, z] = kind.sizeMeters;
   if (kind.primitive === "box") return 0.5 * Math.hypot(x, y, z);
-  return 0.5 * Math.max(x, y, z);
+  return 0.5 * Math.max(x, y, z) + crownOf(kind);
 };
+
+/** Gives how far a kind's wick and flame stand above its body, in metres. */
+const crownOf = (kind) => kind.crownMeters ?? 0;
 
 /** Gives the top radius of a recipe's crown, its last used layer's. */
 const crownTopRadiusMeters = (layers) => {
@@ -345,6 +358,7 @@ const placeItem = (
 
   return {
     color,
+    cueFraction: unitOf(seed, 4),
     embedMeters: kind.embed * kind.sizeMeters[1] * scale,
     footprintMeters,
     kindId: kind.id,
