@@ -17,12 +17,19 @@ const FULL_TURN_RADIANS = 2 * Math.PI;
 // The kinds of inclusion, in the order of a layer's `inclusionWeights`, as
 // a recipe layer's `inclusions` names their counts.
 const INCLUSION_COUNT_KEYS = ["chocolateChips", "nuts", "raisins"];
+// The drips' irregularity, which src/sdf/topping.js templates in: their
+// phase warped by up to DRIP_WARP_RADIANS, DRIP_WARP_WAVES times round the
+// cake, and their length swelling by up to DRIP_SWELL, unitless, of their
+// amplitude, DRIP_SWELL_WAVES times round. Tuning values.
+export const DRIP_SWELL = 0.4;
+export const DRIP_SWELL_WAVES = 5;
+export const DRIP_WARP_RADIANS = 0.4;
+export const DRIP_WARP_WAVES = 3;
 // The greatest drip term a recipe may hold, unitless: the slope of the
-// drips' cut-off round the cake, half the drip amplitude times the waves
-// over the least radius a drip can end on. src/sdf/topping.js scales the
-// term by its DRIP_STEP_FACTOR, 0.45, which keeps the field from
-// overestimating for a slope up to 1.98; 1.9 leaves a margin.
-const MAX_DRIP_TERM = 1.9;
+// drips' cut-off round the cake, as dripTermOf() gives it. src/sdf/topping.js
+// steps by 1 / sqrt(1 + term^2) near the drips, so a steep term costs
+// frame time there; 8 keeps that within reason.
+const MAX_DRIP_TERM = 8;
 // The greatest irregularity a layer may have, in metres: src/sdf/crumb.js
 // raises the field's gradient to about 1.08 at it, which the march's
 // IRREGULARITY_STEP_FACTOR, 0.9, keeps safe.
@@ -53,7 +60,11 @@ export const EATEN_MAX_RADIANS = FULL_TURN_RADIANS - SLIVER_RADIANS;
  *   `inclusionWeights`, the chips', nuts' and raisins' shares of that
  *   count, all 0 for none; and its `irregularityMeters`.
  * - Each layer's `translucency`, 0 to 1, is its material's, defaulting to
- *   0, opaque.
+ *   0, opaque, and its `holeFill` 1 where its material fills its holes
+ *   with chocolate, else 0, and its `crust`, 0 to 1, how far its material
+ *   browns near its outer surface, defaulting to 0, and its
+ *   `crustSaturation`, 0 to 1, that crust colour's saturation, defaulting
+ *   to 1.
  * - A cake with no plate resolves to a plate of all zeros, coloured
  *   `#000000`.
  * - The eaten angle is the least fraction of a full turn, in radians,
@@ -74,7 +85,8 @@ export const EATEN_MAX_RADIANS = FULL_TURN_RADIANS - SLIVER_RADIANS;
  *   push the coat further out, in radius, and by the same plus its pile
  *   and its tallest decoration at the top, as writeCakeBounds() works
  *   them out.
- * - The topping's `translucency`, 0 to 1, defaults to 0, opaque.
+ * - The topping's `translucency`, 0 to 1, defaults to 0, opaque, and its
+ *   `invisible` is 1 where the recipe's `isInvisible` hides it, else 0.
  * - Colours stay sRGB `#rrggbb` strings, as the palette gives them.
  * @param recipe A recipe, as src/cake/recipes.js holds them.
  * @returns The resolved cake: `plate`, `layers`, `topping`,
@@ -97,6 +109,9 @@ export const resolveRecipe = (recipe) => {
       roundingMeters: layer.roundingMeters,
       color: material.color,
       roughness: material.roughness,
+      crust: material.crust ?? 0,
+      crustSaturation: material.crustSaturation ?? 1,
+      holeFill: material.holeFill ? 1 : 0,
       holeStrength: material.holeStrength,
       holeCellMeters: material.holeCellMeters,
       inclusionCellMeters:
@@ -116,6 +131,9 @@ export const resolveRecipe = (recipe) => {
       roundingMeters: 0,
       color: NO_PART_COLOR,
       roughness: 0,
+      crust: 0,
+      crustSaturation: 1,
+      holeFill: 0,
       holeStrength: 0,
       holeCellMeters: 0,
       inclusionCellMeters: 0,
@@ -269,8 +287,14 @@ export const validateRecipe = (recipe) => {
         layer.topRadiusMeters - layer.roundingMeters,
       ]),
     );
-    const dripTerm =
-      (0.5 * topping.dripMeters * topping.dripWaves) / leastRadiusMeters;
+    // The skirt's share of the coverage scales the drips' reach, as
+    // src/sdf/topping.js cuts it: 0 at half coverage, 1 at full.
+    const skirtFraction = Math.max((topping.coverage - 0.5) / 0.5, 0);
+    const dripTerm = dripTermOf(
+      topping.dripMeters * skirtFraction,
+      topping.dripWaves,
+      leastRadiusMeters,
+    );
     if (dripTerm > MAX_DRIP_TERM) {
       problems.push(
         `The topping's drip term, ${dripTerm.toFixed(2)}, passes ` +
@@ -294,6 +318,24 @@ export const validateRecipe = (recipe) => {
 
   return problems;
 };
+
+/** #### Gives the slope of a topping's drip cut-off round the cake
+ * - Half the amplitude times the waves, their warp's and their swell's
+ *   added, over the radius, the most the cut-off's height can change per
+ *   metre round it.
+ * @param dripMeters The drips' reach, in metres: their amplitude times
+ *   the skirt's share of the coverage.
+ * @param dripWaves The drips round the cake.
+ * @param radiusMeters The least radius a drip can end on, in metres.
+ * @returns The slope, unitless.
+ */
+export const dripTermOf = (dripMeters, dripWaves, radiusMeters) =>
+  (0.5 *
+    dripMeters *
+    (dripWaves +
+      DRIP_WARP_RADIANS * DRIP_WARP_WAVES +
+      DRIP_SWELL * DRIP_SWELL_WAVES)) /
+  radiusMeters;
 
 /** #### Works out a cake's two bounding cylinders, in place
  * - The plate's spans its underside to its lip's top, of radius its rim
@@ -485,6 +527,7 @@ const resolveTopping = (topping, crown) => {
       color: NO_PART_COLOR,
       roughness: 0,
       translucency: 0,
+      invisible: 0,
     };
   }
   const material = MATERIALS[topping.material];
@@ -500,5 +543,6 @@ const resolveTopping = (topping, crown) => {
     color: material.color,
     roughness: material.roughness,
     translucency: topping.translucency ?? 0,
+    invisible: topping.isInvisible ? 1 : 0,
   };
 };

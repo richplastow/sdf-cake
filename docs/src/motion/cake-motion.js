@@ -85,7 +85,14 @@ const LAYER_LENGTH_KEYS = [
   "roundingMeters",
   "topRadiusMeters",
 ];
-const LAYER_SURFACE_KEYS = ["holeStrength", "roughness", "translucency"];
+const LAYER_SURFACE_KEYS = [
+  "crust",
+  "crustSaturation",
+  "holeFill",
+  "holeStrength",
+  "roughness",
+  "translucency",
+];
 const PLATE_LENGTH_KEYS = [
   "baseRadiusMeters",
   "lipHeightMeters",
@@ -95,7 +102,7 @@ const PLATE_LENGTH_KEYS = [
 ];
 const PLATE_SURFACE_KEYS = ["metalness", "roughness"];
 const TOPPING_LENGTH_KEYS = ["pileMeters", "roundingMeters", "thicknessMeters"];
-const TOPPING_SURFACE_KEYS = ["roughness", "translucency"];
+const TOPPING_SURFACE_KEYS = ["invisible", "roughness", "translucency"];
 
 // The kind whose items carry a flame.
 const CANDLE_KIND_ID = kindNamed("candle").id;

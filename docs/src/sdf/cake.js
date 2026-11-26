@@ -79,6 +79,48 @@ export const cakeChunk = /* glsl */ `
     return inclusionAt(point, cellMeters, layerInclusionWeights[slot]);
   }
 
+  // How far outside the holed layer, in metres, a point must lie to be in
+  // a filled hole: clear of the smooth maximum's slight lift beside each
+  // hole on the outer surface.
+  const float HOLE_FILL_DEPTH_METERS = 0.0002;
+
+  // Whether a point of the slot's layer lies in one of its holes, where
+  // the layer's holes are filled: outside the holed layer, on its outer
+  // surface or on a cut face alike.
+  bool layerHoleFilledAt(vec3 point, int slot) {
+    if (layerHoleFills[slot] <= 0.5) return false;
+    vec4 crumb = layerCrumbs[slot];
+    vec2 q = vec2(length(point.xz), point.y);
+    float plain = layerPlainDistance(point, q, slot);
+    float holed = holesDistance(point, crumb.y, plain, crumb.x);
+    return holed > HOLE_FILL_DEPTH_METERS;
+  }
+
+  // The slot's colour at a point of its layer, browned towards
+  // CRUST_COLOR by its crust within CRUST_DEPTH_METERS of its outer
+  // surface, so a cut face shows the crust as a rim. A layer already
+  // darker than CRUST_COLOR browns to DARK_CRUST_FACTOR of its own colour
+  // instead. Either is desaturated towards its own grey by the slot's
+  // crust saturation.
+  vec3 layerCrustedColorAt(vec3 point, int slot) {
+    float crust = layerCrusts[slot];
+    if (crust <= 0.0) return layerColors[slot];
+    vec2 q = vec2(length(point.xz), point.y);
+    float depth = -layerPlainDistance(point, q, slot);
+    float outer = 1.0 - smoothstep(0.0, CRUST_DEPTH_METERS, depth);
+    vec3 color = layerColors[slot];
+    vec3 crustColor = dot(color, LUMINANCE_WEIGHTS) <
+        dot(CRUST_COLOR, LUMINANCE_WEIGHTS)
+      ? DARK_CRUST_FACTOR * color
+      : CRUST_COLOR;
+    crustColor = mix(
+      vec3(dot(crustColor, LUMINANCE_WEIGHTS)),
+      crustColor,
+      layerCrustSaturations[slot]
+    );
+    return mix(color, crustColor, crust * outer);
+  }
+
   // The albedo of a material id at the point hit, which an inclusion's
   // and a sprinkle's colour need.
   vec3 cakeAlbedoOf(float materialId, vec3 point) {
@@ -86,7 +128,8 @@ export const cakeChunk = /* glsl */ `
       int slot = int(materialId + 0.5);
       float inclusion = layerInclusionAt(point, slot);
       if (inclusion > 0.0) return inclusionAlbedoOf(inclusion);
-      return layerColors[slot];
+      if (layerHoleFilledAt(point, slot)) return HOLE_FILL_COLOR;
+      return layerCrustedColorAt(point, slot);
     }
     if (materialId < MATERIAL_TOPPING - 0.5) return plateColor;
     if (materialId < MATERIAL_TOPPING + 0.5) return toppingColor;
@@ -213,6 +256,7 @@ export const cakeChunk = /* glsl */ `
       int slot = int(materialId + 0.5);
       float inclusion = layerInclusionAt(point, slot);
       if (inclusion > 0.0) return inclusionRoughnessOf(inclusion);
+      if (layerHoleFilledAt(point, slot)) return HOLE_FILL_ROUGHNESS;
       return layerRoughnesses[slot];
     }
     if (materialId < MATERIAL_TOPPING - 0.5) return plateRoughness;
@@ -263,6 +307,9 @@ export const createCakeUniforms = () => ({
   layerRoundingsMeters: { value: new Float32Array(LAYER_SLOTS) },
   layerTopRadiiMeters: { value: new Float32Array(LAYER_SLOTS) },
   layerTranslucencies: { value: new Float32Array(LAYER_SLOTS) },
+  layerHoleFills: { value: new Float32Array(LAYER_SLOTS) },
+  layerCrusts: { value: new Float32Array(LAYER_SLOTS) },
+  layerCrustSaturations: { value: new Float32Array(LAYER_SLOTS) },
   plateBaseRadiusMeters: { value: 0 },
   plateBoundBottomMeters: { value: 0 },
   plateBoundRadiusMeters: { value: 0 },
@@ -293,6 +340,7 @@ export const createCakeUniforms = () => ({
   toppingRoundingMeters: { value: 0 },
   toppingThicknessMeters: { value: 0 },
   toppingTranslucency: { value: 0 },
+  toppingInvisible: { value: 0 },
 });
 
 /** #### Copies a cake's values into the cake's uniforms, in place
@@ -343,6 +391,12 @@ export const writeCakeUniforms = (uniforms, values) => {
     crumbs[4 * slot + 2] = Math.max(layer.inclusionCellMeters, 0);
     crumbs[4 * slot + 3] = Math.max(layer.irregularityMeters, 0);
     uniforms.layerHeightsMeters.value[slot] = heightMeters;
+    uniforms.layerHoleFills.value[slot] = layer.holeFill;
+    uniforms.layerCrusts.value[slot] = Math.min(Math.max(layer.crust, 0), 1);
+    uniforms.layerCrustSaturations.value[slot] = Math.min(
+      Math.max(layer.crustSaturation, 0),
+      1,
+    );
     for (let index = 0; index < 3; index++) {
       weights[3 * slot + index] = layer.inclusionWeights[index];
     }
@@ -384,6 +438,7 @@ export const writeCakeUniforms = (uniforms, values) => {
     0,
   );
   uniforms.toppingTranslucency.value = topping.translucency;
+  uniforms.toppingInvisible.value = topping.invisible;
 
   uniforms.plateBoundBottomMeters.value = bounds.plate.bottomMeters;
   uniforms.plateBoundRadiusMeters.value = bounds.plate.radiusMeters;

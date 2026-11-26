@@ -37,6 +37,21 @@ export const INCLUSION_KINDS = [
   },
 ];
 
+// The chocolate that fills a layer's holes, where its material's
+// `holeFill` asks for it: an sRGB `#rrggbb` colour and a roughness, 0 to 1.
+const HOLE_FILL_COLOR = "#3b2314";
+const HOLE_FILL_ROUGHNESS = 0.35;
+
+// The crust a baked layer browns to near its outer surface, where its
+// material's `crust` asks for it: an sRGB `#rrggbb` colour, and the depth
+// in metres over which it fades to the layer's own colour.
+const CRUST_COLOR = "#7a4a22";
+const CRUST_DEPTH_METERS = 0.0025;
+// How dark a layer already darker than CRUST_COLOR browns to, as a factor
+// on its own linear colour, unitless: a chocolate sponge's crust darkens
+// rather than lightens it.
+const DARK_CRUST_FACTOR = 0.55;
+
 // The greatest semi-axis of any inclusion kind, in metres.
 const INCLUSION_REACH_METERS = Math.max(
   ...INCLUSION_KINDS.flatMap((kind) => kind.semiAxesMeters),
@@ -91,6 +106,17 @@ export const crumbChunk = /* glsl */ `
   const vec3 INCLUSION_SEMI_AXES_METERS[3] = vec3[](
     ${INCLUSION_KINDS.map(semiAxesOf).join(",\n    ")}
   );
+  // The colour, in linear space, and roughness of the chocolate that fills
+  // a layer's holes where its material asks for it.
+  const vec3 HOLE_FILL_COLOR = ${linearColorOf(HOLE_FILL_COLOR)};
+  const float HOLE_FILL_ROUGHNESS = ${toGlslFloat(HOLE_FILL_ROUGHNESS)};
+  // The crust's colour, in linear space, and the depth it fades over, in
+  // metres.
+  const vec3 CRUST_COLOR = ${linearColorOf(CRUST_COLOR)};
+  const float CRUST_DEPTH_METERS = ${toGlslFloat(CRUST_DEPTH_METERS)};
+  const float DARK_CRUST_FACTOR = ${toGlslFloat(DARK_CRUST_FACTOR)};
+  // Rec. 709's luminance weights, for linear sRGB.
+  const vec3 LUMINANCE_WEIGHTS = vec3(0.2126, 0.7152, 0.0722);
   // The irregularity's angular frequency along each axis, in radians per
   // metre: a lump about 8 cm across.
   const float IRREGULARITY_WAVES_PER_METER = 40.0;

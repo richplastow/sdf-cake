@@ -1,5 +1,6 @@
 /** #### Finds which cake a location hash names
- * - `#black-forest` names the recipe whose `id` is `black-forest`. A
+ * - `#1` names the recipe whose `id` is `1`, `#banh-bo` the one whose
+ *   `id` is `banh-bo`. A
  *   missing or unknown hash names the first recipe, the start of the walk.
  * - Pure: reads no `location`, so Node can run it.
  * @param hash The location hash, with its leading `#`, or empty.

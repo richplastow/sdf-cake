@@ -20,6 +20,8 @@ const ORANGE_SLICE_TRANSLUCENCY = 0.15;
 // The colour of a scattered kind a cake lacks, or one whose colours come
 // from SPRINKLE_PALETTE: black, as an sRGB `#rrggbb` string.
 const NO_SCATTER_COLOR = "#000000";
+// The point a centred item takes, in metres.
+const CENTRE = { xMeters: 0, zMeters: 0 };
 // How many candidate points each item's placement tries.
 const PLACEMENT_TRIES = 64;
 // The disc that holds the items' centres, as a fraction of the crown's top
@@ -113,6 +115,42 @@ export const DECORATION_KINDS = [
     tiltRadians: degreesToRadians(20),
     vary: 0.3,
   },
+  {
+    embed: 0.35,
+    id: 7,
+    isScattered: true,
+    name: "sesame",
+    primitive: "ellipsoid",
+    roughness: 0.5,
+    sizeMeters: [0.003, 0.0008, 0.0018],
+    tiltRadians: degreesToRadians(12),
+    vary: 0.15,
+  },
+  {
+    // Negative, so the disc's centre stands above the surface and only its
+    // low edge, tilted down by its recipe's `at`, goes into the cake.
+    embed: -0.4,
+    id: 8,
+    isScattered: false,
+    name: "chocolateDisc",
+    primitive: "cylinder",
+    roughness: 0.15,
+    sizeMeters: [0.056, 0.004, 0.056],
+    tiltRadians: degreesToRadians(25),
+    vary: 0,
+  },
+  {
+    // Chocolate sprinkles, one colour, the recipe's, as flakes take theirs.
+    embed: 0.3,
+    id: 9,
+    isScattered: true,
+    name: "chocolateSprinkle",
+    primitive: "capsule",
+    roughness: 0.5,
+    sizeMeters: [0.008, 0.0022, 0.0022],
+    tiltRadians: degreesToRadians(10),
+    vary: 0.2,
+  },
 ];
 
 // The sprinkles' five colours, as sRGB `#rrggbb` strings; the field's GLSL
@@ -128,13 +166,16 @@ export const SPRINKLE_PALETTE = [
 /** #### Places a recipe's countable decorations on its top, in slots
  * - Kinds go largest nominal footprint first, ties in recipe order, so the
  *   smaller kinds take the gaps the larger leave.
- * - A kind of count 1 placed first goes at the centre. Every other item
+ * - A decoration that gives `at`, its `xMeters` and `zMeters`, places its
+ *   one item there. Otherwise a kind of count 1 placed first goes at the
+ *   centre. Every other item
  *   tries `PLACEMENT_TRIES` points from the hash in the disc of
  *   `TOP_INSET_FRACTION` of the crown's top radius less its footprint, and
  *   takes the one whose footprint lies farthest from every footprint
  *   already placed.
- * - The hash is seeded by the cake's id, the kind's name, the item's index
- *   and the try, so a cake always places the same way.
+ * - The hash is seeded by the cake's `placementSeed`, or its id, the
+ *   kind's name, the item's index and the try, so a cake always places
+ *   the same way.
  * @param recipe A recipe, as src/cake/recipes.js holds them.
  * @returns The slots, each its `color`, `cueFraction` (0 up to 1, its share
  *   of a scatter in time), `embedMeters`, `footprintMeters`, `kindId`,
@@ -158,9 +199,9 @@ export const placeDecorations = (recipe) => {
           crownRadiusMeters,
           decoration.color,
           index,
-          isCentred,
+          decoration.at ?? (isCentred ? CENTRE : null),
           kind,
-          recipe.id,
+          recipe.placementSeed ?? recipe.id,
           slots,
         ),
       );
@@ -304,6 +345,10 @@ const lowbias32 = (value) => {
  * - Its size, yaw and tilts come from the hash of the cake's id, its
  *   kind's name and its index; each try's point, from the same and the
  *   try.
+ * - A fixed point, `xMeters` and `zMeters`, places it there; null lets it
+ *   try points from the hash. The point's optional `tiltZRadians` fixes
+ *   its tilt about Z, with no tilt about X, and its yaw to the point's
+ *   `yawRadians`, or 0.
  * - Its rotation is the yaw about Y after the tilts about X and then Z,
  *   `Ry × Rx × Rz`, as nine numbers in column-major order.
  */
@@ -311,21 +356,28 @@ const placeItem = (
   crownRadiusMeters,
   color,
   index,
-  isCentred,
+  fixedPoint,
   kind,
   recipeId,
   placed,
 ) => {
   const seed = hashText(`${recipeId}:${kind.name}:${index}`);
   const scale = 1 + kind.vary * (2 * unitOf(seed, 0) - 1);
-  const yawRadians = FULL_TURN_RADIANS * unitOf(seed, 1);
-  const tiltXRadians = kind.tiltRadians * (2 * unitOf(seed, 2) - 1);
-  const tiltZRadians = kind.tiltRadians * (2 * unitOf(seed, 3) - 1);
+  const isTiltFixed = fixedPoint?.tiltZRadians !== undefined;
+  const yawRadians = isTiltFixed
+    ? (fixedPoint.yawRadians ?? 0)
+    : FULL_TURN_RADIANS * unitOf(seed, 1);
+  const tiltXRadians = isTiltFixed
+    ? 0
+    : kind.tiltRadians * (2 * unitOf(seed, 2) - 1);
+  const tiltZRadians = isTiltFixed
+    ? fixedPoint.tiltZRadians
+    : kind.tiltRadians * (2 * unitOf(seed, 3) - 1);
   const footprintMeters = footprintOf(kind, scale);
 
-  let xMeters = 0;
-  let zMeters = 0;
-  if (!isCentred) {
+  let xMeters = fixedPoint?.xMeters ?? 0;
+  let zMeters = fixedPoint?.zMeters ?? 0;
+  if (!fixedPoint) {
     const discMeters = Math.max(
       TOP_INSET_FRACTION * crownRadiusMeters - footprintMeters,
       0,

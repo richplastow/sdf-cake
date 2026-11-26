@@ -13,7 +13,11 @@ import { LAYER_SLOTS } from "../cake/slots.js";
  *   its inclusion cell and w its irregularity's amplitude, in metres;
  *   `layerInclusionWeights` its shares of chips, nuts and raisins; and
  *   `layerTranslucencies` its translucency, 0 to 1, which the shading
- *   reads.
+ *   reads; and `layerHoleFills`, above 0.5 where the layer's holes are
+ *   filled, solid, with HOLE_FILL_COLOR rather than cut; and
+ *   `layerCrusts`, 0 to 1, how far the layer browns to CRUST_COLOR near
+ *   its outer surface, with `layerCrustSaturations` the saturation of
+ *   that crust's colour, 0 grey to 1 full.
  * - Every function takes the point in the plane of revolution, q, its
  *   distance from the Y axis and its height, in metres, and those that
  *   need it the point itself, p.
@@ -28,7 +32,10 @@ export const layersChunk = /* glsl */ `
   uniform float layerBottomsMeters[${LAYER_SLOTS}];
   uniform vec3 layerColors[${LAYER_SLOTS}];
   uniform vec4 layerCrumbs[${LAYER_SLOTS}];
+  uniform float layerCrustSaturations[${LAYER_SLOTS}];
+  uniform float layerCrusts[${LAYER_SLOTS}];
   uniform float layerHeightsMeters[${LAYER_SLOTS}];
+  uniform float layerHoleFills[${LAYER_SLOTS}];
   uniform vec3 layerInclusionWeights[${LAYER_SLOTS}];
   uniform float layerRoughnesses[${LAYER_SLOTS}];
   uniform float layerRoundingsMeters[${LAYER_SLOTS}];
@@ -70,8 +77,10 @@ export const layersChunk = /* glsl */ `
   }
 
   // The distance to the slot's layer, in metres, negative inside it: the
-  // plain layer with its fractal holes cut from it.
+  // plain layer with its fractal holes cut from it, or left whole where
+  // its holes are filled, as the shading colours them.
   float layerDistance(vec3 p, vec2 q, int slot) {
+    if (layerHoleFills[slot] > 0.5) return layerPlainDistance(p, q, slot);
     vec4 crumb = layerCrumbs[slot];
     return holesDistance(p, crumb.y, layerPlainDistance(p, q, slot), crumb.x);
   }

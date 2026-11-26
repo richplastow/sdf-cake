@@ -75,6 +75,10 @@ const FLAME_CLOCK_WRAP_SECONDS = 3600;
 // How much larger than the sphere round the cake the camera fits,
 // unitless, so the cake never touches the view's edge.
 const FIT_MARGIN = 1.15;
+// The least radius of the sphere the camera fits, in metres, so a small
+// cake looks small rather than filling the view as a large one does. Below
+// every other cake's sphere, so only the honey cake's fit changes.
+const MIN_FIT_RADIUS_METERS = 0.1;
 const FULL_TURN_RADIANS = 2 * Math.PI;
 // The slow turn of the turntable while nothing holds it: a lap in 30 s.
 const IDLE_TURN_RADIANS_PER_SECOND = MathUtils.degToRad(12);
@@ -147,12 +151,12 @@ const resolveCake = (recipe) => {
 /** Gives a recipe's greatest reveal stop, the whole cake. */
 const revealMaxOf = (recipe) => revealPartsOf(recipe).length - 1;
 
-// The cake the hash names, at its first eaten step and its last reveal
-// stop, the whole cake, in motion from load, its decorations at rest: its
-// values are written into the material's own uniforms every frame.
+// The cake the hash names, at its first eaten step and its least reveal
+// stop, the plate alone, in motion from load: its values are written into
+// the material's own uniforms every frame.
 let cakeIndex = cakeIndexForHash(location.hash, RECIPES);
 let eatenStep = 0;
-let revealStop = revealMaxOf(RECIPES[cakeIndex]);
+let revealStop = 0;
 
 /** #### Resolves a recipe at the current eaten step and reveal stop
  * - Its eaten angle is the step's, and the stop's presence mask is applied
@@ -248,7 +252,8 @@ const setRevealStop = (stop) => {
 
 /** #### Steps the eaten slider, walking to the next cake from its ends
  * - Past step 0 it goes to the previous cake at its last step; past the
- *   last step, to the next cake at step 0, both wrapping.
+ *   last step, to the next cake at step 0 with the reveal slider at its
+ *   least stop, both wrapping.
  * @param delta The steps to move, −1 or 1.
  */
 const stepEaten = (delta) => {
@@ -257,6 +262,9 @@ const stepEaten = (delta) => {
     const index = previousCakeIndex(cakeIndex, RECIPES.length);
     goToCake(index, stepCountOf(RECIPES[index]) - 1);
   } else if (step > stepCountOf(RECIPES[cakeIndex]) - 1) {
+    // Walking on resets the reveal slider to its least stop, the plate
+    // alone, which snapRevealStop() keeps at 0 on the next cake.
+    revealStop = 0;
     goToCake(nextCakeIndex(cakeIndex, RECIPES.length), 0);
   } else {
     setEatenStep(step);
@@ -392,7 +400,7 @@ const stepCameraFit = (deltaSeconds) => {
   cameraDistance.target = distanceToFitSphere(
     camera.aspect,
     CAMERA_FOV_DEGREES,
-    FIT_MARGIN * sphere.radiusMeters,
+    FIT_MARGIN * Math.max(sphere.radiusMeters, MIN_FIT_RADIUS_METERS),
   );
   rigHeight.target = sphere.centerMeters;
   if (isCameraJumping) {

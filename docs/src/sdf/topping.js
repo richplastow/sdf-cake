@@ -1,3 +1,11 @@
+import {
+  DRIP_SWELL,
+  DRIP_SWELL_WAVES,
+  DRIP_WARP_RADIANS,
+  DRIP_WARP_WAVES,
+} from "../cake/resolve.js";
+import { toGlslFloat } from "./decorations.js";
+
 /** #### The GLSL chunk of the topping's field
  * - Needs the primitives chunk, src/sdf/primitives.js, and the layers'
  *   chunk, src/sdf/layers.js, pasted before it, and the smoothed stack's
@@ -37,6 +45,9 @@ export const toppingChunk = /* glsl */ `
   uniform float toppingRoundingMeters;
   uniform float toppingThicknessMeters;
   uniform float toppingTranslucency;
+  // Above 0.5 for an invisible topping, which draws nothing but still
+  // gives the scattered decorations its cap to sit on.
+  uniform float toppingInvisible;
 
   // How far below the stack's top the carving copies stop, in metres, so
   // the topping sinks a little into the topmost layer's holes.
@@ -56,12 +67,18 @@ export const toppingChunk = /* glsl */ `
   // The drips' phase round the cake, in radians, so no drip lines up with
   // the slice, which is cut about +X.
   const float DRIP_PHASE_RADIANS = 0.7;
-  // The factor on the drip cut-off's term, unitless. The cut-off's height
-  // varies round the cake, so its lower face slopes, and the height above
-  // a point overestimates the distance to it by up to sqrt(1 + term^2);
-  // this keeps the term's gradient at or below 1 for a slope up to 1.98,
-  // which src/cake/resolve.js's MAX_DRIP_TERM keeps every recipe below.
-  const float DRIP_STEP_FACTOR = 0.45;
+  // The drips' irregularity, from src/cake/resolve.js: a warp of their
+  // phase, in radians, and a swell of their length, unitless, each with
+  // its waves round the cake.
+  const float DRIP_SWELL = ${toGlslFloat(DRIP_SWELL)};
+  const float DRIP_SWELL_WAVES = ${toGlslFloat(DRIP_SWELL_WAVES)};
+  const float DRIP_WARP_RADIANS = ${toGlslFloat(DRIP_WARP_RADIANS)};
+  const float DRIP_WARP_WAVES = ${toGlslFloat(DRIP_WARP_WAVES)};
+  // The fraction of the crown's radius taken as the least radius a drip
+  // ends on, unitless, below every recipe's least layer radius less its
+  // rounding over its crown radius, so the step factor is never too
+  // large.
+  const float DRIP_RADIUS_FRACTION = 0.9;
   // The topping's material id: the first after the plate's, 7.
   const float MATERIAL_TOPPING = 8.0;
   // The steepest slope of the pile's profile, (1 - u^2)^2 over u from 0 to
@@ -180,7 +197,7 @@ export const toppingChunk = /* glsl */ `
   // CARVE_DIP_METERS below the base, so it reaches into the top layer's
   // holes. toppingCarveDistance() is subtracted last.
   vec2 toppingField(vec3 p, vec2 q, float smoothStack) {
-    if (toppingCoverage <= 0.0) {
+    if (toppingCoverage <= 0.0 || toppingInvisible > 0.5) {
       return vec2(NO_SURFACE_METERS, MATERIAL_TOPPING);
     }
     float capRadius = toppingCapRadius();
@@ -224,17 +241,32 @@ export const toppingChunk = /* glsl */ `
     );
     if (skirtFraction > 0.0) {
       float angle = atan(p.z, p.x);
-      float wave = 0.5 + 0.5 * sin(
-        toppingDripWaves * angle + DRIP_PHASE_RADIANS
-      );
+      // Each drip's place is warped and its length swollen round the
+      // cake, so no two drips match.
+      float warp = DRIP_WARP_RADIANS * sin(DRIP_WARP_WAVES * angle);
+      float swell = 1.0 - DRIP_SWELL *
+        (0.5 + 0.5 * sin(DRIP_SWELL_WAVES * angle + 2.0));
+      float wave = swell * (0.5 + 0.5 * sin(
+        toppingDripWaves * angle + DRIP_PHASE_RADIANS + warp
+      ));
       float cutOff = max(
         toppingBaseMeters * (1.0 - skirtFraction) -
           toppingDripMeters * skirtFraction * wave,
         0.0
       );
-      // The drips break the bound: their factor scales this term alone.
+      // The drips break the bound: the cut-off's height above a point
+      // overestimates the distance to its sloping face by up to
+      // sqrt(1 + slope^2), so this term alone is scaled by the inverse, the
+      // slope as src/cake/resolve.js's dripTermOf() gives it.
       float term = cutOff - q.y;
-      if (toppingDripMeters > 0.0) term *= DRIP_STEP_FACTOR;
+      if (toppingDripMeters > 0.0) {
+        float slope = 0.5 * toppingDripMeters * skirtFraction * (
+          toppingDripWaves +
+          DRIP_WARP_RADIANS * DRIP_WARP_WAVES +
+          DRIP_SWELL * DRIP_SWELL_WAVES
+        ) / (DRIP_RADIUS_FRACTION * toppingRadiusMeters);
+        term *= inversesqrt(1.0 + slope * slope);
+      }
       solid = min(solid, max(offset, term));
     }
 
