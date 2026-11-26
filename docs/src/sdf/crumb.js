@@ -47,6 +47,24 @@ const HOLE_FILL_ROUGHNESS = 0.35;
 // in metres over which it fades to the layer's own colour.
 const CRUST_COLOR = "#7a4a22";
 const CRUST_DEPTH_METERS = 0.0025;
+// The scorch marks a layer's material may ask for with its `scorch`: sRGB
+// `#rrggbb` colours, the plain one and the muted brown and grey a varied
+// scorch ranges between; the noise's cell edge, in metres, for large,
+// blurry patches, before the material's scale; and the noise's threshold,
+// unitless, at the rim and at the centre, lower in the middle so the
+// patches cluster there within SCORCH_CENTRE_METERS of the axis, and its
+// softness. Each layer's slot, plus its material's scorch seed, shifts the
+// noise by SCORCH_SLOT_SHIFT_METERS, so stacked layers scorch differently.
+// Tuning values.
+const SCORCH_CELL_METERS = 0.03;
+const SCORCH_CENTRE_METERS = 0.07;
+const SCORCH_COLOR = "#1c120b";
+const SCORCH_VARIED_BROWN = "#3b2a1f";
+const SCORCH_VARIED_GREY = "#58554f";
+const SCORCH_SLOT_SHIFT_METERS = 1.37;
+const SCORCH_SOFTNESS = 0.35;
+const SCORCH_THRESHOLD_CENTRE = 0.25;
+const SCORCH_THRESHOLD_RIM = 0.95;
 // How dark a layer already darker than CRUST_COLOR browns to, as a factor
 // on its own linear colour, unitless: a chocolate sponge's crust darkens
 // rather than lightens it.
@@ -115,6 +133,19 @@ export const crumbChunk = /* glsl */ `
   const vec3 CRUST_COLOR = ${linearColorOf(CRUST_COLOR)};
   const float CRUST_DEPTH_METERS = ${toGlslFloat(CRUST_DEPTH_METERS)};
   const float DARK_CRUST_FACTOR = ${toGlslFloat(DARK_CRUST_FACTOR)};
+  const float SCORCH_CELL_METERS = ${toGlslFloat(SCORCH_CELL_METERS)};
+  const float SCORCH_CENTRE_METERS = ${toGlslFloat(SCORCH_CENTRE_METERS)};
+  const vec3 SCORCH_COLOR = ${linearColorOf(SCORCH_COLOR)};
+  const vec3 SCORCH_VARIED_BROWN = ${linearColorOf(SCORCH_VARIED_BROWN)};
+  const vec3 SCORCH_VARIED_GREY = ${linearColorOf(SCORCH_VARIED_GREY)};
+  const float SCORCH_SLOT_SHIFT_METERS = ${toGlslFloat(
+    SCORCH_SLOT_SHIFT_METERS,
+  )};
+  const float SCORCH_SOFTNESS = ${toGlslFloat(SCORCH_SOFTNESS)};
+  const float SCORCH_THRESHOLD_CENTRE = ${toGlslFloat(
+    SCORCH_THRESHOLD_CENTRE,
+  )};
+  const float SCORCH_THRESHOLD_RIM = ${toGlslFloat(SCORCH_THRESHOLD_RIM)};
   // Rec. 709's luminance weights, for linear sRGB.
   const vec3 LUMINANCE_WEIGHTS = vec3(0.2126, 0.7152, 0.0722);
   // The irregularity's angular frequency along each axis, in radians per
@@ -219,6 +250,74 @@ export const crumbChunk = /* glsl */ `
     return INCLUSION_ROUGHNESSES[
       int(materialId - MATERIAL_INCLUSION_FIRST + 0.5)
     ];
+  }
+
+  // Smooth value noise at p, 0 to 1, of cells the edge given, in metres:
+  // each corner's hash blended by smoothstep, iq's value noise,
+  // https://iquilezles.org/articles/morenoise/, in 3D so sides mark as
+  // tops do.
+  float valueNoise(vec3 p, float cellMeters) {
+    vec3 x = p / cellMeters;
+    vec3 cell = floor(x);
+    vec3 f = x - cell;
+    vec3 u = f * f * (3.0 - 2.0 * f);
+    float corners[8];
+    for (int i = 0; i < 8; i++) {
+      vec3 corner = vec3(float(i & 1), float((i >> 1) & 1), float(i >> 2));
+      corners[i] = unitOfHash(cellHash(cell + corner));
+    }
+    return mix(
+      mix(
+        mix(corners[0], corners[1], u.x),
+        mix(corners[2], corners[3], u.x),
+        u.y
+      ),
+      mix(
+        mix(corners[4], corners[5], u.x),
+        mix(corners[6], corners[7], u.x),
+        u.y
+      ),
+      u.z
+    );
+  }
+
+  // A layer's scorch colour at p, 0 to 1 deep, as its alpha, and its
+  // colour: two octaves of valueNoise(), shifted by the slot and the
+  // seed, a whole number, against a threshold that falls towards the axis
+  // as far as the clustering, 0 even to 1 full, takes it, and by the
+  // coverage, so soft patches gather in the middle or spread evenly. The
+  // scorch packs its strength, unitless,
+  // its scale of SCORCH_CELL_METERS, its variety, 0 plain to 1 ranging
+  // between muted brown and grey, and its coverage, unitless.
+  vec4 scorchAt(
+    vec3 p,
+    int slot,
+    vec4 scorch,
+    float seed,
+    float clustering
+  ) {
+    vec3 shifted = p + (float(slot) + seed) * SCORCH_SLOT_SHIFT_METERS;
+    float cell = SCORCH_CELL_METERS * scorch.y;
+    float noise = 0.65 * valueNoise(shifted, cell) +
+      0.35 * valueNoise(shifted, 0.5 * cell);
+    float centre = clustering * (1.0 - smoothstep(
+      0.0,
+      SCORCH_CENTRE_METERS,
+      length(p.xz)
+    ));
+    float threshold = mix(
+      SCORCH_THRESHOLD_RIM,
+      SCORCH_THRESHOLD_CENTRE,
+      centre
+    ) - scorch.w;
+    float depth = scorch.x *
+      smoothstep(threshold, threshold + SCORCH_SOFTNESS, noise);
+    vec3 varied = mix(
+      SCORCH_VARIED_BROWN,
+      SCORCH_VARIED_GREY,
+      valueNoise(shifted.zxy, 0.7 * cell)
+    );
+    return vec4(mix(SCORCH_COLOR, varied, scorch.z), depth);
   }
 
   // The displacement of a layer's distance at p, in metres, up to the

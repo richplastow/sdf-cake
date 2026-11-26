@@ -26,8 +26,6 @@
   /* the page's colour, showing through the transparent canvas: a light grey
      on the light page, and the system's own on the dark page */
   --page-color: light-dark(#f0f0f0, Canvas);
-  /* draws the canvas's focus ring inside the viewport, which it fills */
-  --scene-focus-ring-inset: 4px;
 
   color-scheme: light dark;
   font-family: system-ui, sans-serif;
@@ -63,17 +61,6 @@ body {
  */
 .scene[data-dragging] {
   cursor: grabbing;
-}
-
-/*
- * The canvas takes focus from Tab alone, never from a press, which
- * src/input/drag.js keeps where it was. Its ring is the browser's own,
- * drawn inside its edges, since outside them it would fall off the
- * viewport.
- */
-.scene:focus-visible {
-  outline: auto;
-  outline-offset: calc(-1 * var(--scene-focus-ring-inset));
 }
 
 /*

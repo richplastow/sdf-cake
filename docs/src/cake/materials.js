@@ -10,6 +10,13 @@ const HONEY_TRANSLUCENCY = 0.65;
 // material's `crust`: a subtle hint of browning at its outer surface.
 const LIGHT_CRUST = 0.4;
 
+// The Artemis offering's scorch: a hint of occasional blotches, spread
+// evenly over every surface, as the moon's are.
+const ARTEMIS_SCORCH = 0.6;
+const ARTEMIS_SCORCH_CLUSTERING = 0;
+const ARTEMIS_SCORCH_COVERAGE = 0.3;
+const ARTEMIS_SCORCH_SCALE = 1.5;
+
 // The palette every recipe names its materials from, first guesses to tune
 // by eye. Each entry gives a colour as an sRGB `#rrggbb` string, a
 // roughness as Three.js's physical shading takes it, 0 to 1, a metalness,
@@ -20,7 +27,13 @@ const LIGHT_CRUST = 0.4;
 // whose `holeFill` is true fills its holes with chocolate rather than
 // cutting them, as src/sdf/crumb.js colours it, and one with a `crust`, 0
 // to 1, browns that far near its outer surface, as a baked crust, its
-// colour desaturated by an optional `crustSaturation`, 0 grey to 1 full.
+// colour desaturated by an optional `crustSaturation`, 0 grey to 1 full,
+// and marked in patches by an optional `scorch`, 0 to 1, as a pan scorches:
+// `scorchClustering`, 0 even to 1 gathered in the middle, the default,
+// places them, `scorchScale` scales the patches, `scorchCoverage`, about 0
+// to 0.4, spreads them, `scorchSeed`, any whole number, picks another
+// pattern, and `scorchVariety`, 0 to 1, ranges their colour between muted
+// brown and grey.
 export const MATERIALS = {
   sponge: {
     color: "#e9c46a",
@@ -69,6 +82,14 @@ export const MATERIALS = {
     holeStrength: 0.15,
     holeCellMeters: 0.003,
     crust: LIGHT_CRUST,
+    // The pancake's scorch, at half its patch size for this smaller bread;
+    // each of the honey cake's two breads takes its own pattern by its
+    // slot.
+    scorch: 0.75,
+    scorchCoverage: 0.45,
+    scorchScale: 1,
+    scorchSeed: 0,
+    scorchVariety: 1,
   },
   moonSponge: {
     color: "#eceef3",
@@ -77,6 +98,10 @@ export const MATERIALS = {
     holeStrength: 0.15,
     holeCellMeters: 0.003,
     crust: LIGHT_CRUST,
+    scorch: ARTEMIS_SCORCH,
+    scorchClustering: ARTEMIS_SCORCH_CLUSTERING,
+    scorchCoverage: ARTEMIS_SCORCH_COVERAGE,
+    scorchScale: ARTEMIS_SCORCH_SCALE,
   },
   greyMoonSponge: {
     color: "#c3c6cc",
@@ -85,6 +110,10 @@ export const MATERIALS = {
     holeStrength: 0.15,
     holeCellMeters: 0.003,
     crust: LIGHT_CRUST,
+    scorch: ARTEMIS_SCORCH,
+    scorchClustering: ARTEMIS_SCORCH_CLUSTERING,
+    scorchCoverage: ARTEMIS_SCORCH_COVERAGE,
+    scorchScale: ARTEMIS_SCORCH_SCALE,
   },
   silverIcing: {
     color: "#e4e7ed",
@@ -148,6 +177,12 @@ export const MATERIALS = {
     holeCellMeters: 0.002,
     crust: 0.5,
     crustSaturation: 0.5,
+    scorch: 0.75,
+    scorchCoverage: 0.45,
+    scorchScale: 2,
+    // Change to any other whole number to try another pattern.
+    scorchSeed: 0,
+    scorchVariety: 4,
   },
   cream: {
     color: "#fff4e0",

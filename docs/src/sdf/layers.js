@@ -17,7 +17,10 @@ import { LAYER_SLOTS } from "../cake/slots.js";
  *   filled, solid, with HOLE_FILL_COLOR rather than cut; and
  *   `layerCrusts`, 0 to 1, how far the layer browns to CRUST_COLOR near
  *   its outer surface, with `layerCrustSaturations` the saturation of
- *   that crust's colour, 0 grey to 1 full.
+ *   that crust's colour, 0 grey to 1 full, and `layerScorches` its scorch
+ *   marks, as scorchAt() in src/sdf/crumb.js unpacks them, with
+ *   `layerScorchSeeds` their seed and `layerScorchClusterings` how far
+ *   they gather in the middle, 0 to 1.
  * - Every function takes the point in the plane of revolution, q, its
  *   distance from the Y axis and its height, in metres, and those that
  *   need it the point itself, p.
@@ -34,6 +37,9 @@ export const layersChunk = /* glsl */ `
   uniform vec4 layerCrumbs[${LAYER_SLOTS}];
   uniform float layerCrustSaturations[${LAYER_SLOTS}];
   uniform float layerCrusts[${LAYER_SLOTS}];
+  uniform float layerScorchClusterings[${LAYER_SLOTS}];
+  uniform float layerScorchSeeds[${LAYER_SLOTS}];
+  uniform vec4 layerScorches[${LAYER_SLOTS}];
   uniform float layerHeightsMeters[${LAYER_SLOTS}];
   uniform float layerHoleFills[${LAYER_SLOTS}];
   uniform vec3 layerInclusionWeights[${LAYER_SLOTS}];

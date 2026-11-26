@@ -64,7 +64,13 @@ export const EATEN_MAX_RADIANS = FULL_TURN_RADIANS - SLIVER_RADIANS;
  *   with chocolate, else 0, and its `crust`, 0 to 1, how far its material
  *   browns near its outer surface, defaulting to 0, and its
  *   `crustSaturation`, 0 to 1, that crust colour's saturation, defaulting
- *   to 1.
+ *   to 1, and its `scorch`, 0 to 1, how dark its scorch marks are,
+ *   defaulting to 0, with its `scorchClustering`, 0 even to 1 gathered in
+ *   the middle, defaulting to 1, `scorchCoverage`, unitless, defaulting
+ *   to 0,
+ *   `scorchScale`, defaulting to 1, `scorchSeed`, a whole number
+ *   that picks another pattern, defaulting to 0, and `scorchVariety`, 0 to 1,
+ *   defaulting to 0.
  * - A cake with no plate resolves to a plate of all zeros, coloured
  *   `#000000`.
  * - The eaten angle is the least fraction of a full turn, in radians,
@@ -111,6 +117,12 @@ export const resolveRecipe = (recipe) => {
       roughness: material.roughness,
       crust: material.crust ?? 0,
       crustSaturation: material.crustSaturation ?? 1,
+      scorch: material.scorch ?? 0,
+      scorchClustering: material.scorchClustering ?? 1,
+      scorchCoverage: material.scorchCoverage ?? 0,
+      scorchScale: material.scorchScale ?? 1,
+      scorchSeed: material.scorchSeed ?? 0,
+      scorchVariety: material.scorchVariety ?? 0,
       holeFill: material.holeFill ? 1 : 0,
       holeStrength: material.holeStrength,
       holeCellMeters: material.holeCellMeters,
@@ -133,6 +145,12 @@ export const resolveRecipe = (recipe) => {
       roughness: 0,
       crust: 0,
       crustSaturation: 1,
+      scorch: 0,
+      scorchClustering: 1,
+      scorchCoverage: 0,
+      scorchScale: 1,
+      scorchSeed: 0,
+      scorchVariety: 0,
       holeFill: 0,
       holeStrength: 0,
       holeCellMeters: 0,

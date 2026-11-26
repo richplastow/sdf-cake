@@ -91,6 +91,12 @@ const LAYER_SURFACE_KEYS = [
   "holeFill",
   "holeStrength",
   "roughness",
+  "scorch",
+  "scorchClustering",
+  "scorchCoverage",
+  "scorchScale",
+  "scorchSeed",
+  "scorchVariety",
   "translucency",
 ];
 const PLATE_LENGTH_KEYS = [

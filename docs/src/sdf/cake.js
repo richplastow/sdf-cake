@@ -101,10 +101,14 @@ export const cakeChunk = /* glsl */ `
   // surface, so a cut face shows the crust as a rim. A layer already
   // darker than CRUST_COLOR browns to DARK_CRUST_FACTOR of its own colour
   // instead. Either is desaturated towards its own grey by the slot's
-  // crust saturation.
+  // crust saturation. Its scorch then darkens it in patches towards
+  // its scorch colour, on the outer surface alone.
   vec3 layerCrustedColorAt(vec3 point, int slot) {
     float crust = layerCrusts[slot];
-    if (crust <= 0.0) return layerColors[slot];
+    vec4 scorch = layerScorches[slot];
+    if (crust <= 0.0 && scorch.x <= 0.0) {
+      return layerColors[slot];
+    }
     vec2 q = vec2(length(point.xz), point.y);
     float depth = -layerPlainDistance(point, q, slot);
     float outer = 1.0 - smoothstep(0.0, CRUST_DEPTH_METERS, depth);
@@ -118,7 +122,19 @@ export const cakeChunk = /* glsl */ `
       crustColor,
       layerCrustSaturations[slot]
     );
-    return mix(color, crustColor, crust * outer);
+    color = mix(color, crustColor, crust * outer);
+    // Scorch marks, on the outer surface alone.
+    if (scorch.x > 0.0) {
+      vec4 mark = scorchAt(
+        point,
+        slot,
+        scorch,
+        layerScorchSeeds[slot],
+        layerScorchClusterings[slot]
+      );
+      color = mix(color, mark.rgb, mark.a * outer);
+    }
+    return color;
   }
 
   // The albedo of a material id at the point hit, which an inclusion's
@@ -310,6 +326,9 @@ export const createCakeUniforms = () => ({
   layerHoleFills: { value: new Float32Array(LAYER_SLOTS) },
   layerCrusts: { value: new Float32Array(LAYER_SLOTS) },
   layerCrustSaturations: { value: new Float32Array(LAYER_SLOTS) },
+  layerScorches: { value: new Float32Array(4 * LAYER_SLOTS) },
+  layerScorchSeeds: { value: new Float32Array(LAYER_SLOTS) },
+  layerScorchClusterings: { value: new Float32Array(LAYER_SLOTS) },
   plateBaseRadiusMeters: { value: 0 },
   plateBoundBottomMeters: { value: 0 },
   plateBoundRadiusMeters: { value: 0 },
@@ -393,6 +412,16 @@ export const writeCakeUniforms = (uniforms, values) => {
     uniforms.layerHeightsMeters.value[slot] = heightMeters;
     uniforms.layerHoleFills.value[slot] = layer.holeFill;
     uniforms.layerCrusts.value[slot] = Math.min(Math.max(layer.crust, 0), 1);
+    const scorches = uniforms.layerScorches.value;
+    scorches[4 * slot] = Math.min(Math.max(layer.scorch, 0), 1);
+    scorches[4 * slot + 1] = Math.max(layer.scorchScale, 0.01);
+    scorches[4 * slot + 2] = Math.min(Math.max(layer.scorchVariety, 0), 1);
+    scorches[4 * slot + 3] = layer.scorchCoverage;
+    uniforms.layerScorchSeeds.value[slot] = Math.round(layer.scorchSeed);
+    uniforms.layerScorchClusterings.value[slot] = Math.min(
+      Math.max(layer.scorchClustering, 0),
+      1,
+    );
     uniforms.layerCrustSaturations.value[slot] = Math.min(
       Math.max(layer.crustSaturation, 0),
       1,

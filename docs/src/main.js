@@ -75,6 +75,10 @@ const FLAME_CLOCK_WRAP_SECONDS = 3600;
 // How much larger than the sphere round the cake the camera fits,
 // unitless, so the cake never touches the view's edge.
 const FIT_MARGIN = 1.15;
+// How much slower the transition runs when Left walks back from a cake's
+// first eaten step, unitless: half speed, so twice as long, to show the
+// change between cakes.
+const BACK_WALK_TIME_SCALE = 0.5;
 // The least radius of the sphere the camera fits, in metres, so a small
 // cake looks small rather than filling the view as a large one does. Below
 // every other cake's sphere, so only the honey cake's fit changes.
@@ -157,6 +161,9 @@ const revealMaxOf = (recipe) => revealPartsOf(recipe).length - 1;
 let cakeIndex = cakeIndexForHash(location.hash, RECIPES);
 let eatenStep = 0;
 let revealStop = 0;
+// How fast the cake's motion and the camera's fit run, unitless: 1 but
+// while a walk back runs slower, until the next change.
+let transitionTimeScale = 1;
 
 /** #### Resolves a recipe at the current eaten step and reveal stop
  * - Its eaten angle is the step's, and the stop's presence mask is applied
@@ -217,8 +224,11 @@ const showSliders = () => {
  *   and the camera go straight to the new fit.
  * @param index The cake's index in walk order.
  * @param step The eaten step the cake arrives at.
+ * @param timeScale How fast the transition and the camera's fit run,
+ *   unitless: 1 as usual, below 1 slower.
  */
-const goToCake = (index, step) => {
+const goToCake = (index, step, timeScale = 1) => {
+  transitionTimeScale = timeScale;
   const oldRevealMax = revealMaxOf(RECIPES[cakeIndex]);
   cakeIndex = index;
   const recipe = RECIPES[index];
@@ -234,6 +244,7 @@ const goToCake = (index, step) => {
 
 /** #### Sets the eaten step within the current cake, easing the slice */
 const setEatenStep = (step) => {
+  transitionTimeScale = 1;
   eatenStep = step;
   retargetSlice(motion, eatenAngleForStep(RECIPES[cakeIndex].eaten, step), {
     reducedMotion: reducedMotion.matches,
@@ -243,6 +254,7 @@ const setEatenStep = (step) => {
 
 /** #### Sets the reveal stop within the current cake, easing the parts */
 const setRevealStop = (stop) => {
+  transitionTimeScale = 1;
   revealStop = stop;
   retargetPresence(motion, stageCake(RECIPES[cakeIndex]), {
     reducedMotion: reducedMotion.matches,
@@ -251,21 +263,20 @@ const setRevealStop = (stop) => {
 };
 
 /** #### Steps the eaten slider, walking to the next cake from its ends
- * - Past step 0 it goes to the previous cake at its last step; past the
- *   last step, to the next cake at step 0 with the reveal slider at its
- *   least stop, both wrapping.
+ * - Past step 0 it goes to the previous cake at step 0, its transition
+ *   slowed by `BACK_WALK_TIME_SCALE`; past the last step, to the next cake
+ *   at step 0 with the reveal slider at its least stop, both wrapping.
  * @param delta The steps to move, −1 or 1.
  */
 const stepEaten = (delta) => {
   const step = eatenStep + delta;
   if (step < 0) {
-    const index = previousCakeIndex(cakeIndex, RECIPES.length);
-    goToCake(index, stepCountOf(RECIPES[index]) - 1);
+    goToCake(previousCakeIndex(cakeIndex, RECIPES), 0, BACK_WALK_TIME_SCALE);
   } else if (step > stepCountOf(RECIPES[cakeIndex]) - 1) {
     // Walking on resets the reveal slider to its least stop, the plate
     // alone, which snapRevealStop() keeps at 0 on the next cake.
     revealStop = 0;
-    goToCake(nextCakeIndex(cakeIndex, RECIPES.length), 0);
+    goToCake(nextCakeIndex(cakeIndex, RECIPES), 0);
   } else {
     setEatenStep(step);
   }
@@ -439,9 +450,9 @@ renderer.setAnimationLoop((timestampMs) => {
     flameSeconds.value =
       (flameSeconds.value + deltaSeconds) % FLAME_CLOCK_WRAP_SECONDS;
   }
-  stepCakeMotion(motion, deltaSeconds);
+  stepCakeMotion(motion, transitionTimeScale * deltaSeconds);
   writeCakeUniforms(quad.material.uniforms, motion.values);
-  stepCameraFit(deltaSeconds);
+  stepCameraFit(transitionTimeScale * deltaSeconds);
   stepViewReset(deltaSeconds, viewReset, view);
   placeView();
   renderer.render(scene, camera);
