@@ -1,14 +1,12 @@
 /**
  * @fileoverview
- * The twelve cakes, in walk order, as recipes of named materials from
+ * The twelve cakes, in tour order, as recipes of named materials from
  * src/cake/materials.js: first guesses to tune by eye.
  */
 
-/** #### The twelve cakes, in the order the walk visits them
+/** #### The twelve cakes, in the order the tour visits them
  * - Each `id` is assigned here, never derived, and is what the location
  *   hash and later features quote.
- * - An optional `isOffWalk`, when true, leaves the cake off the arrows'
- *   walk, so only its hash reaches it.
  * - An optional `placementSeed` seeds placeDecorations() in place of the
  *   `id`, so a cake whose id changes keeps its decorations' places.
  * - Lengths are metres, colours sRGB `#rrggbb` strings, and layers run
@@ -289,8 +287,6 @@ export const RECIPES = [
   },
   {
     id: "5",
-    // Reached only by its hash, #5: the walk passes from #4 to the pancake.
-    isOffWalk: true,
     // Seeds the placement as its first id, "fruit-cake", did, so its
     // decorations stay where they were tuned.
     placementSeed: "fruit-cake",

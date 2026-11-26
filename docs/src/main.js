@@ -1,20 +1,22 @@
 /**
  * @fileoverview
- * Entry point: raymarches the cake the location hash names, or the first
- * in walk order, lit by the scene's lights, on a transparent canvas, and
- * turns it slowly like a turntable. A drag on the canvas turns and tilts
- * it, pausing the slow turn while held; the scroll wheel, a trackpad's
- * scroll or pinch, a touch screen's pinch, and a Cmd-drag up and down, or
- * a Ctrl-drag off Apple devices, zoom; a double-click eases the drag's turn
- * and tilt and the zoom back to the view at load. The eaten slider along
- * the bottom, Left and Right, and the two arrow buttons eat the cake step
- * by step, and from the slider's ends walk round the loop of cakes, each
- * becoming the next on springs, its decorations sinking away first and the
- * next cake's dropping in last, with the location hash kept in step. The
- * reveal slider up the right, Up and Down take the cake apart part by
- * part, and Escape hides and shows the controls. The camera stays fitted
- * to the cake. That is the whole of Presentation Mode, the only mode so
- * far.
+ * Entry point: leads the visitor round the tour's pages, src/tour/pages.js,
+ * from the page the location hash names, or the welcome page: a welcome dialog,
+ * four cakes to guess, prompted by src/tour/guess.js, a fun-facts dialog, the
+ * presentation cakes and a thank-you dialog. Raymarches the page's cake, or
+ * nothing on a dialog's page, lit by the scene's lights, on a transparent
+ * canvas, and turns it slowly like a turntable. A drag on the canvas turns and
+ * tilts it, pausing the slow turn while held; the scroll wheel, a trackpad's
+ * scroll or pinch, a touch screen's pinch, and a Cmd-drag up and down, or a
+ * Ctrl-drag off Apple devices, zoom; a double-click eases the drag's turn and
+ * tilt and the zoom back to the view at load. The eaten slider along the
+ * bottom, Left and Right, and the two arrow buttons eat the cake step by step,
+ * and from the slider's ends walk on along the tour, each cake becoming the
+ * next on springs, its decorations sinking away first and the next cake's
+ * dropping in last, with the location hash kept in step. The reveal slider up
+ * the right, Up and Down take the cake apart part by part, and Escape hides and
+ * shows the controls. The camera stays fitted to the cake. That is the whole of
+ * Presentation Mode, the only mode so far.
  */
 
 import {
@@ -35,9 +37,7 @@ import {
   revealPartsOf,
   snapRevealStop,
 } from "./cake/reveal.js";
-import { cakeIndexForHash } from "./cake/select.js";
 import { eatenAngleForStep, stepCountOf } from "./cake/slice.js";
-import { nextCakeIndex, previousCakeIndex } from "./cake/walk.js";
 import { distanceToFitSphere, fitSphereOfBounds } from "./camera/fit.js";
 import { connectDrag } from "./input/drag.js";
 import {
@@ -59,9 +59,29 @@ import { CAMERA_SPRING, createSpring, stepSpring } from "./motion/spring.js";
 import { createLights } from "./scene/lights.js";
 import { createRaymarchQuad } from "./scene/quad.js";
 import { writeCakeUniforms } from "./sdf/cake.js";
+import {
+  canWalkOn,
+  createGuess,
+  noteBlocked,
+  noteReveal,
+  noteRevealByVisitor,
+  noteRight,
+  promptOf,
+  revealCapOf,
+  stepGuess,
+} from "./tour/guess.js";
+import {
+  isLastGuessPage,
+  nextPageIndex,
+  PAGES,
+  pageIndexForHash,
+  previousPageIndex,
+} from "./tour/pages.js";
 import { connectCakeArrows } from "./ui/cake-arrows.js";
 import { connectControlsToggle } from "./ui/controls-toggle.js";
+import { connectDialogs } from "./ui/dialogs.js";
 import { connectKeys } from "./ui/keys.js";
+import { connectPrompt } from "./ui/prompt.js";
 import { connectSliders } from "./ui/sliders.js";
 
 const CAMERA_ELEVATION_RADIANS = MathUtils.degToRad(22); // above the table
@@ -75,9 +95,12 @@ const FLAME_CLOCK_WRAP_SECONDS = 3600;
 // How much larger than the sphere round the cake the camera fits,
 // unitless, so the cake never touches the view's edge.
 const FIT_MARGIN = 1.15;
+// Where each dialog's button leads, by its page's `data-page` value: the
+// id of the page to go to.
+const DIALOG_TARGET_IDS = { "fun-facts": "pancake", thanks: "", welcome: "1" };
 // How much slower the transition runs when Left walks back from a cake's
-// first eaten step, unitless: half speed, so twice as long, to show the
-// change between cakes.
+// first eaten step, or from an interlude, unitless: half speed, so twice
+// as long, to show the change between cakes.
 const BACK_WALK_TIME_SCALE = 0.5;
 // The least radius of the sphere the camera fits, in metres, so a small
 // cake looks small rather than filling the view as a large one does. Below
@@ -155,27 +178,62 @@ const resolveCake = (recipe) => {
 /** Gives a recipe's greatest reveal stop, the whole cake. */
 const revealMaxOf = (recipe) => revealPartsOf(recipe).length - 1;
 
-// The cake the hash names, at its first eaten step and its least reveal
-// stop, the plate alone, in motion from load: its values are written into
-// the material's own uniforms every frame.
-let cakeIndex = cakeIndexForHash(location.hash, RECIPES);
+/** Tells whether a page shows a cake: a `guess` or `presentation` page. */
+const isCakePage = (page) =>
+  page.kind === "guess" || page.kind === "presentation";
+
+/** #### Gives a recipe's index in `RECIPES` for a cake page
+ * - A page that shows no cake holds the current recipe, `heldIndex`.
+ */
+const recipeIndexOf = (page, heldIndex) =>
+  isCakePage(page)
+    ? RECIPES.findIndex((recipe) => recipe.id === page.id)
+    : heldIndex;
+
+// The page the hash names, and its cake at its first eaten step and its
+// least reveal stop, the plate alone, in motion from load: its values are
+// written into the material's own uniforms every frame. A page that shows
+// no cake holds the first recipe, with nothing shown.
+let pageIndex = pageIndexForHash(location.hash, PAGES);
+let cakeIndex = recipeIndexOf(PAGES[pageIndex], 0);
 let eatenStep = 0;
 let revealStop = 0;
+// The current recipe's greatest reveal stop, kept so the per-frame path
+// allocates nothing.
+let revealMax = revealMaxOf(RECIPES[cakeIndex]);
+// The guess flow on a `guess` page, created afresh on each arrival, else
+// `null`.
+let guess =
+  PAGES[pageIndex].kind === "guess"
+    ? createGuess(isLastGuessPage(pageIndex, PAGES))
+    : null;
 // How fast the cake's motion and the camera's fit run, unitless: 1 but
 // while a walk back runs slower, until the next change.
 let transitionTimeScale = 1;
 
 /** #### Resolves a recipe at the current eaten step and reveal stop
  * - Its eaten angle is the step's, and the stop's presence mask is applied
- *   to it, so hidden parts have zero size.
+ *   to it, so hidden parts have zero size. On a page that shows no cake,
+ *   every part is hidden, the plate included.
  * @param recipe A recipe, as src/cake/recipes.js holds them.
  * @returns The resolved, masked cake, with its `decorations`.
  */
 const stageCake = (recipe) => {
   const cake = resolveCake(recipe);
   cake.eatenAngleRadians = eatenAngleForStep(recipe.eaten, eatenStep);
-  return maskResolvedCake(cake, presenceMaskFor(recipe, revealStop));
+  const mask = isCakePage(PAGES[pageIndex])
+    ? presenceMaskFor(recipe, revealStop)
+    : emptyMaskFor(recipe);
+  return maskResolvedCake(cake, mask);
 };
+
+/** Gives a presence mask that hides every part of a recipe. */
+const emptyMaskFor = (recipe) => ({
+  plate: 0,
+  layers: recipe.layers.map(() => 0),
+  topping: 0,
+  decorations: 0,
+});
 
 const motion = createCakeMotion(stageCake(RECIPES[cakeIndex]));
 
@@ -212,34 +270,81 @@ let turntableShare = 1;
 
 /** #### Sets both sliders' values and `max`es to the current cake's */
 const showSliders = () => {
-  const recipe = RECIPES[cakeIndex];
-  sliders.setEaten(eatenStep, stepCountOf(recipe) - 1);
-  sliders.setReveal(revealStop, revealMaxOf(recipe));
+  sliders.setEaten(eatenStep, stepCountOf(RECIPES[cakeIndex]) - 1);
+  sliders.setReveal(revealStop, revealMax);
 };
 
-/** #### Starts the transition to a cake, and writes its id as the hash
- * - The reveal stop snaps to the new cake's slider by snapRevealStop(), so
- *   the cake arrives taken apart as far as the last one was.
+/** #### Sets the controls and the dialog to suit the current page
+ * - A page that shows no cake disables the sliders and the Right arrow,
+ *   and the welcome page the Left arrow too; a dialog's page shows its
+ *   dialog, and every other page none.
+ */
+const showPageControls = () => {
+  const page = PAGES[pageIndex];
+  const isCake = isCakePage(page);
+  sliders.setDisabled(!isCake);
+  arrows.setNextDisabled(!isCake);
+  arrows.setPreviousDisabled(page.kind === "welcome");
+  dialogs.showDialog(
+    page.kind === "welcome" ? "welcome" : isCake ? null : page.id,
+  );
+};
+
+/** #### Starts the transition to a page, and writes its id as the hash
+ * - A cake page's cake arrives at its first eaten step. Coming from
+ *   another cake, the reveal stop snaps to the new cake's slider by
+ *   snapRevealStop(), so the cake arrives taken apart as far as the last
+ *   one was; coming from a page that shows no cake, it starts at stop 0,
+ *   so the plate grows from nothing.
+ * - A page that shows no cake holds the current recipe with every part
+ *   hidden, so the cake and its plate shrink away.
  * - Retargets the motion from where it is; under reduced motion the cake
  *   and the camera go straight to the new fit.
- * @param index The cake's index in walk order.
- * @param step The eaten step the cake arrives at.
+ * - The welcome page writes the bare path, with no `#`.
+ * @param index The page's index in `PAGES`.
  * @param timeScale How fast the transition and the camera's fit run,
  *   unitless: 1 as usual, below 1 slower.
  */
-const goToCake = (index, step, timeScale = 1) => {
+const goToPage = (index, timeScale = 1) => {
   transitionTimeScale = timeScale;
-  const oldRevealMax = revealMaxOf(RECIPES[cakeIndex]);
-  cakeIndex = index;
-  const recipe = RECIPES[index];
-  eatenStep = step;
-  revealStop = snapRevealStop(revealStop, oldRevealMax, revealMaxOf(recipe));
-  retargetCakeMotion(motion, stageCake(recipe), {
+  const wasCake = isCakePage(PAGES[pageIndex]);
+  const oldRevealMax = revealMax;
+  pageIndex = index;
+  const page = PAGES[index];
+  if (isCakePage(page)) {
+    cakeIndex = recipeIndexOf(page, cakeIndex);
+    revealMax = revealMaxOf(RECIPES[cakeIndex]);
+    eatenStep = 0;
+    revealStop = wasCake
+      ? snapRevealStop(revealStop, oldRevealMax, revealMax)
+      : 0;
+  }
+  guess =
+    page.kind === "guess" ? createGuess(isLastGuessPage(index, PAGES)) : null;
+  // The cap holds on arrival too, since snapRevealStop() can give the top.
+  revealStop = Math.min(revealStop, revealCapNow());
+  retargetCakeMotion(motion, stageCake(RECIPES[cakeIndex]), {
     reducedMotion: reducedMotion.matches,
   });
   isCameraJumping ||= reducedMotion.matches;
   showSliders();
-  history.replaceState(null, "", `#${recipe.id}`);
+  showPageControls();
+  writeHash();
+};
+
+/** #### Writes the current page's id as the location hash
+ * - The welcome page writes the bare path, with no `#`, so a load on an
+ *   unknown hash, which names the welcome page, drops it.
+ * - Uses history.replaceState(), which adds no history entry and fires no
+ *   `hashchange`, so browser Back leaves the app.
+ */
+const writeHash = () => {
+  const { id } = PAGES[pageIndex];
+  history.replaceState(
+    null,
+    "",
+    id === "" ? location.pathname + location.search : `#${id}`,
+  );
 };
 
 /** #### Sets the eaten step within the current cake, easing the slice */
@@ -262,33 +367,86 @@ const setRevealStop = (stop) => {
   showSliders();
 };
 
-/** #### Steps the eaten slider, walking to the next cake from its ends
- * - Past step 0 it goes to the previous cake at step 0, its transition
- *   slowed by `BACK_WALK_TIME_SCALE`; past the last step, to the next cake
- *   at step 0 with the reveal slider at its least stop, both wrapping.
+/** #### Steps the eaten slider, walking along the tour from its ends
+ * - Past step 0 it goes to the previous page, its transition slowed by
+ *   `BACK_WALK_TIME_SCALE`; past the last step, to the next page with the
+ *   reveal slider at its least stop. The tour does not wrap.
+ * - On a `guess` page, past the last step walks on only once canWalkOn()
+ *   allows it; until then it notes the block, which prompts for Reveal.
  * @param delta The steps to move, −1 or 1.
  */
 const stepEaten = (delta) => {
   const step = eatenStep + delta;
   if (step < 0) {
-    goToCake(previousCakeIndex(cakeIndex, RECIPES), 0, BACK_WALK_TIME_SCALE);
+    const previous = previousPageIndex(pageIndex, PAGES);
+    if (previous !== null) goToPage(previous, BACK_WALK_TIME_SCALE);
   } else if (step > stepCountOf(RECIPES[cakeIndex]) - 1) {
+    if (guess !== null && !canWalkOn(guess)) {
+      noteBlocked(guess);
+      return;
+    }
+    const next = nextPageIndex(pageIndex, PAGES);
+    if (next === null) return;
     // Walking on resets the reveal slider to its least stop, the plate
     // alone, which snapRevealStop() keeps at 0 on the next cake.
     revealStop = 0;
-    goToCake(nextCakeIndex(cakeIndex, RECIPES), 0);
+    goToPage(next);
   } else {
     setEatenStep(step);
   }
 };
 
-/** #### Steps the reveal slider, doing nothing past either end
+/** #### Gives the highest reveal stop allowed now
+ * - On a `guess` page, revealCapOf() holds it one below the top until the
+ *   visitor's first Right; elsewhere it is the top.
+ */
+const revealCapNow = () =>
+  guess === null ? revealMax : revealCapOf(guess, revealMax);
+
+/** #### Steps the reveal slider, doing nothing past either end or the cap
  * @param delta The stops to move, −1 or 1.
+ * @returns Whether the stop changed.
  */
 const stepReveal = (delta) => {
   const stop = revealStop + delta;
-  if (stop < 0 || stop > revealMaxOf(RECIPES[cakeIndex])) return;
+  if (stop < 0 || stop > revealCapNow()) return false;
   setRevealStop(stop);
+  return true;
+};
+
+/** #### Steps the reveal slider for the visitor's Up or Down
+ * - Does nothing on a page that shows no cake; on a `guess` page, a
+ *   change is noted as the visitor's, which ends the Up prompt.
+ * @param delta The stops to move, −1 or 1.
+ */
+const revealByVisitor = (delta) => {
+  if (!isCakePage(PAGES[pageIndex])) return;
+  if (stepReveal(delta) && guess !== null) noteRevealByVisitor(guess);
+};
+
+/** #### Handles the visitor's Left, by key or button
+ * - Does nothing on the welcome page; on an interlude, goes back one page,
+ *   slowly; on a cake page, steps the eaten slider back.
+ */
+const goLeft = () => {
+  const page = PAGES[pageIndex];
+  if (page.kind === "welcome") return;
+  if (isCakePage(page)) {
+    stepEaten(-1);
+    return;
+  }
+  const previous = previousPageIndex(pageIndex, PAGES);
+  if (previous !== null) goToPage(previous, BACK_WALK_TIME_SCALE);
+};
+
+/** #### Handles the visitor's Right, by key or button
+ * - Does nothing on a page that shows no cake; on a `guess` page, it is
+ *   noted first, so it lifts the reveal cap.
+ */
+const goRight = () => {
+  if (!isCakePage(PAGES[pageIndex])) return;
+  if (guess !== null) noteRight(guess);
+  stepEaten(1);
 };
 
 /** #### Places the rig and the camera to show the view
@@ -368,35 +526,57 @@ connectZoom(canvas, zoomBy);
 canvas.addEventListener("dblclick", () => startViewReset(viewReset, view));
 
 // The sliders' `input` events, from a key, a click or a drag, retarget
-// within the cake; neither walks to another cake.
+// within the cake; neither walks to another cake. Only the visitor fires
+// them, so a reveal change is noted as the visitor's. A click or drag past
+// the reveal cap snaps the slider back to it.
 const sliders = connectSliders(controls, {
   onEaten: (step) => {
     if (step !== eatenStep) setEatenStep(step);
   },
-  onReveal: (stop) => {
-    if (stop !== revealStop) setRevealStop(stop);
+  onReveal: (input) => {
+    const stop = Math.min(input, revealCapNow());
+    if (stop === revealStop) {
+      showSliders();
+      return;
+    }
+    setRevealStop(stop);
+    if (guess !== null) noteRevealByVisitor(guess);
   },
 });
-showSliders();
+// The arrow keys on the welcome page and the interludes are gated here,
+// since src/ui/keys.js cancels them before any dialog sees them.
 connectKeys({
-  onDown: () => stepReveal(-1),
-  onLeft: () => stepEaten(-1),
-  onRight: () => stepEaten(1),
+  onDown: () => revealByVisitor(-1),
+  onLeft: goLeft,
+  onRight: goRight,
   onSpace: () => {
     isTurntableOn = !isTurntableOn;
   },
-  onUp: () => stepReveal(1),
+  onUp: () => revealByVisitor(1),
 });
-connectCakeArrows(controls, {
-  onNext: () => stepEaten(1),
-  onPrevious: () => stepEaten(-1),
+const arrows = connectCakeArrows(controls, {
+  onNext: goRight,
+  onPrevious: goLeft,
 });
+const dialogs = connectDialogs({
+  onButton: (pageKey) => {
+    goToPage(pageIndexForHash(DIALOG_TARGET_IDS[pageKey], PAGES));
+  },
+});
+const guessPrompt = connectPrompt({
+  onReveal: () => {
+    if (guess !== null) noteReveal(guess);
+  },
+});
+showSliders();
+showPageControls();
+writeHash();
 connectControlsToggle();
-// The viewer editing the hash in the URL starts a transition to the cake
-// it names, at its first eaten step; history.replaceState() fires no
-// `hashchange`, so the walk's own writes never reach here.
+// The viewer editing the hash in the URL starts a transition to the page
+// it names; history.replaceState() fires no `hashchange`, so the tour's
+// own writes never reach here.
 window.addEventListener("hashchange", () => {
-  goToCake(cakeIndexForHash(location.hash, RECIPES), 0);
+  goToPage(pageIndexForHash(location.hash, PAGES));
 });
 
 /** #### Steps the camera's springs towards the fit of the cake's values
@@ -450,6 +630,15 @@ renderer.setAnimationLoop((timestampMs) => {
     flameSeconds.value =
       (flameSeconds.value + deltaSeconds) % FLAME_CLOCK_WRAP_SECONDS;
   }
+  // The guess flow steps the reveal slider up by itself, never as the
+  // visitor, and shows the prompt it calls for.
+  if (guess !== null && stepGuess(guess, deltaSeconds, revealStop)) {
+    stepReveal(1);
+  }
+  guessPrompt.showPrompt(
+    guess === null ? null : promptOf(guess, revealStop, revealMax),
+    PAGES[pageIndex].cakeName,
+  );
   stepCakeMotion(motion, transitionTimeScale * deltaSeconds);
   writeCakeUniforms(quad.material.uniforms, motion.values);
   stepCameraFit(transitionTimeScale * deltaSeconds);

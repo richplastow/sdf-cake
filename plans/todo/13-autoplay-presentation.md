@@ -6,7 +6,7 @@ type: plan
 
 ## Context
 
-- After the fun-facts interlude of [Plan 12](12-guess-the-cake.md), each
+- After the fun-facts interlude of [Plan 12](../done/12-guess-the-cake.md), each
   cake from `#pancake` to `#custard-pie` tells its part of the story in
   sections 2 to 8 of
   [20261126-cake-day.md](../../20261126-cake-day.md#2-intro-pancake): the

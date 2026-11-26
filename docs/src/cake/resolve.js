@@ -364,6 +364,8 @@ export const dripTermOf = (dripMeters, dripWaves, radiusMeters) =>
  *   thickness and the most its smoothing can push the coat further out,
  *   in radius, and by the same, its pile and its tallest decoration at
  *   the top.
+ * - A stack with no layer taller than 0 has no bound, whatever its
+ *   topping, so it gets the same cylinder as a missing plate.
  * - Each grows by `BOUND_MARGIN_METERS`; a part a cake lacks has a
  *   cylinder of all zeros, with no margin.
  * - Reads lengths below 0, which a spring can pass through, as 0, so it
@@ -429,11 +431,15 @@ export const writeCakeBounds = (
   const toppingThicknessMeters = Math.max(topping.thicknessMeters, 0);
   const bulgedThicknessMeters =
     (1 + SKIRT_BULGE_PER_THICKNESS) * toppingThicknessMeters;
-  // A displaced layer reaches up to its irregularity beyond its cone.
+  // A displaced layer reaches up to its irregularity beyond its cone. With
+  // no layer taller than 0, the topping has nothing to coat, so the stack
+  // takes a radius of 0 and the all-zero cylinder, never an infinite span.
   writeBoundingCylinder(
     bounds.stack,
     stackBottomMeters - irregularityMeters,
-    widestRadiusMeters + irregularityMeters + bulgedThicknessMeters,
+    stackBottomMeters === Infinity
+      ? 0
+      : widestRadiusMeters + irregularityMeters + bulgedThicknessMeters,
     stackTopMeters +
       irregularityMeters +
       bulgedThicknessMeters +

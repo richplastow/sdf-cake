@@ -7,12 +7,20 @@
  * @param container The element holding the buttons, `.controls`.
  * @param handlers `onNext` and `onPrevious`, each called with no
  *   arguments on a click of its button.
+ * @returns `setNextDisabled` and `setPreviousDisabled`, each taking
+ *   whether its button is disabled, which takes it out of the tab order.
  */
 export const connectCakeArrows = (container, { onNext, onPrevious }) => {
-  container
-    .querySelector('button[data-walk="next"]')
-    .addEventListener("click", () => onNext());
-  container
-    .querySelector('button[data-walk="previous"]')
-    .addEventListener("click", () => onPrevious());
+  const next = container.querySelector('button[data-walk="next"]');
+  const previous = container.querySelector('button[data-walk="previous"]');
+  next.addEventListener("click", () => onNext());
+  previous.addEventListener("click", () => onPrevious());
+  return {
+    setNextDisabled: (disabled) => {
+      next.disabled = disabled;
+    },
+    setPreviousDisabled: (disabled) => {
+      previous.disabled = disabled;
+    },
+  };
 };

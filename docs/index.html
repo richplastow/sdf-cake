@@ -68,5 +68,63 @@
         data-slider="reveal"
       />
     </div>
+    <div class="prompt" role="status">
+      <p data-prompt="up" hidden>
+        Press the ‘Up’ key ↑ for more layers…
+      </p>
+      <p data-prompt="bite" hidden>
+        Press the ‘Right’ key → to take a bite…
+      </p>
+      <p data-prompt="blocked-up" hidden>
+        No next cake until this one is revealed: press the ‘Up’ key ↑ for
+        more layers…
+      </p>
+      <div data-prompt="guess blocked-reveal" hidden>
+        <p data-prompt="guess" hidden>Make your guess: what cake is this?</p>
+        <p data-prompt="blocked-reveal" hidden>
+          No next cake until this one is revealed: press ‘Reveal…’
+        </p>
+        <button type="button">Reveal…</button>
+      </div>
+      <div data-prompt="name name-next name-deeper" hidden>
+        <h2 data-cake-name></h2>
+        <p>
+          <span data-prompt="name" hidden>
+            Press the ‘Right’ key → for the next cake.
+          </span>
+          <span data-prompt="name-next" hidden>
+            Keep pressing ‘Right’ → to reach the next cake
+          </span>
+          <span data-prompt="name-deeper" hidden>
+            Keep pressing ‘Right’ → to delve deeper
+          </span>
+        </p>
+      </div>
+    </div>
+    <dialog class="tour-dialog" data-page="welcome">
+      <h1>Happy International Cake Day!</h1>
+      <h2>So let’s start with… ‘Guess the cake!’</h2>
+      <p>
+        Up ↑ and Down ↓ build the cake layer by layer. Left ← and
+        Right → eat it, and walk between cakes. Space stops and starts the
+        turntable, and Escape hides the controls. Drag to orbit the cake,
+        scroll or pinch to zoom, and double-click to reset the view.
+      </p>
+      <button type="button">Feed me cake!</button>
+    </dialog>
+    <dialog class="tour-dialog" data-page="fun-facts">
+      <h1>Fun facts!</h1>
+      <h2>Now for a slice of cake history.</h2>
+      <p>
+        Each cake tells its own story. Watch, or take over with the arrow
+        keys.
+      </p>
+      <button type="button">Tell me more!</button>
+    </dialog>
+    <dialog class="tour-dialog" data-page="thanks">
+      <h1>Thanks for watching</h1>
+      <h2>Now go eat some cake!</h2>
+      <button type="button">Restart…</button>
+    </dialog>
   </body>
 </html>

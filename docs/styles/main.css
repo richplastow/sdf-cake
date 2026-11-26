@@ -20,6 +20,22 @@
   --controls-inset: 1.5rem;
   --controls-offset: 1.5rem; /* the toolbar's from the viewport's bottom */
   --controls-fade-duration: 200ms; /* Escape's fade out and back in */
+  /* a disabled arrow button's opacity, greyed out on the tour's dialog
+     pages */
+  --disabled-opacity: 0.4;
+  /* the tour's dialogs and the guess prompt: a panel in the page's
+     colours */
+  --panel-background: light-dark(rgb(255 255 255 / 0.9), rgb(0 0 0 / 0.75));
+  --panel-color: CanvasText;
+  --panel-gap: 0.75rem; /* between a panel's lines */
+  --panel-padding: 1.25rem;
+  --panel-radius: 0.75rem;
+  --dialog-max-width: 32rem;
+  --dialog-gutter: 1rem; /* the least from the dialog to the viewport */
+  --prompt-offset: 1.5rem; /* the prompt's from the viewport's top */
+  /* the least from the prompt to the viewport's sides, clearing the reveal
+     slider up the right */
+  --prompt-side-clearance: 4rem;
   --eaten-length: 40vw; /* the eaten slider's length, at least 12rem */
   --eaten-min-length: 12rem;
   --reveal-length: 40vh; /* the reveal slider's length, up the right */
@@ -150,4 +166,68 @@ body {
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 2;
+}
+
+.cake-arrow:disabled {
+  cursor: default;
+  opacity: var(--disabled-opacity);
+}
+
+/*
+ * The tour's dialogs, src/ui/dialogs.js: non-modal, so the page behind
+ * stays live, and centred in the viewport by a fixed box with auto
+ * margins, which the browser's own `fit-content` size leaves room for.
+ */
+.tour-dialog {
+  position: fixed;
+  inset: 0;
+  max-inline-size: min(
+    var(--dialog-max-width),
+    100% - 2 * var(--dialog-gutter)
+  );
+  margin: auto;
+  padding: var(--panel-padding);
+  border: none;
+  border-radius: var(--panel-radius);
+  background-color: var(--panel-background);
+  color: var(--panel-color);
+  text-align: center;
+}
+
+.tour-dialog > * {
+  margin-block: 0 var(--panel-gap);
+}
+
+.tour-dialog > :last-child {
+  margin-block-end: 0;
+}
+
+/*
+ * The guess prompt, src/ui/prompt.js, at the top centre of the viewport
+ * and outside the controls, so Escape never hides it. Only the prompt
+ * shown, the one child without `hidden`, draws a panel.
+ */
+.prompt {
+  position: fixed;
+  top: var(--prompt-offset);
+  left: 50%;
+  max-inline-size: calc(100% - 2 * var(--prompt-side-clearance));
+  translate: -50% 0;
+  color: var(--panel-color);
+  text-align: center;
+}
+
+.prompt > * {
+  margin: 0;
+  padding: var(--panel-padding);
+  border-radius: var(--panel-radius);
+  background-color: var(--panel-background);
+}
+
+.prompt > * > * {
+  margin-block: 0 var(--panel-gap);
+}
+
+.prompt > * > :last-child {
+  margin-block-end: 0;
 }
