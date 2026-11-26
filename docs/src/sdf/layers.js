@@ -84,9 +84,12 @@ export const layersChunk = /* glsl */ `
 
   // The distance to the slot's layer, in metres, negative inside it: the
   // plain layer with its fractal holes cut from it, or left whole where
-  // its holes are filled, as the shading colours them.
-  float layerDistance(vec3 p, vec2 q, int slot) {
-    if (layerHoleFills[slot] > 0.5) return layerPlainDistance(p, q, slot);
+  // its holes are filled, as the shading colours them, or for a shadow
+  // ray, which treats the crumb as solid, as no light passes through it.
+  float layerDistance(vec3 p, vec2 q, int slot, bool isShadowRay) {
+    if (isShadowRay || layerHoleFills[slot] > 0.5) {
+      return layerPlainDistance(p, q, slot);
+    }
     vec4 crumb = layerCrumbs[slot];
     return holesDistance(p, crumb.y, layerPlainDistance(p, q, slot), crumb.x);
   }
@@ -115,7 +118,8 @@ export const layersChunk = /* glsl */ `
   // bound is the blend or more beyond the nearest distance so far, of any
   // part, is left out: such a slot cannot lower the cake's least distance,
   // and lies too far from the nearest layer to change the smoothed one.
-  // The hidden slot, beneath a translucent layer, is left out entirely.
+  // The hidden slot, beneath a translucent layer, is left out entirely. A
+  // shadow ray reads each layer without its holes, as layerDistance() says.
   vec3 layersField(
     vec3 p,
     vec2 q,
@@ -124,6 +128,7 @@ export const layersChunk = /* glsl */ `
     int seedSlot,
     float seedDistance,
     int hiddenSlot,
+    bool isShadowRay,
     vec3 stack
   ) {
     for (int slot = 0; slot < LAYER_SLOTS; slot++) {
@@ -132,7 +137,7 @@ export const layersChunk = /* glsl */ `
       float layer = seedDistance;
       if (slot != seedSlot) {
         if (layerBoundDistance(q, slot) >= nearest + blend) continue;
-        layer = layerDistance(p, q, slot);
+        layer = layerDistance(p, q, slot, isShadowRay);
         if (layer < stack.x) stack.xy = vec2(layer, float(slot));
         nearest = min(nearest, layer);
       }

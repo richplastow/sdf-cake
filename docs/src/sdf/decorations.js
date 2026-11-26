@@ -302,12 +302,16 @@ export const decorationsChunk = /* glsl */ `
   // the item's frame by the transpose of its rotation, p * M in GLSL, and
   // its scale, uniform, multiplies the distance back. The slot hiddenSlot
   // is left out; any number outside 0 to DECORATION_SLOTS - 1 hides none.
-  vec2 decorationsField(vec3 p, int hiddenSlot) {
+  // A shadow ray reads every flame as out, as a flame casts no shadow, and
+  // evaluates the items outside the slab too: the soft shadow reads the
+  // slab's distance as a near miss of a real caster, which shades lit
+  // ground in contours wherever a shadow ray nears the slab's faces.
+  vec2 decorationsField(vec3 p, int hiddenSlot, bool isShadowRay) {
     float slab = max(
       toppingBaseMeters - DECORATION_SLAB_BELOW_METERS - p.y,
       p.y - stackBoundTopMeters
     );
-    if (slab > DECORATION_SLAB_SKIP_METERS) {
+    if (!isShadowRay && slab > DECORATION_SLAB_SKIP_METERS) {
       return vec2(slab, MATERIAL_SLOT_FIRST);
     }
 
@@ -331,7 +335,11 @@ export const decorationsChunk = /* glsl */ `
       // A candle's wick and flame need its slot, for the flame and its
       // timeline, so they are drawn here rather than by its kind.
       if (kind == CANDLE_KIND) {
-        vec2 crown = candleCrownDistance(local, i, offset.w);
+        vec2 crown = candleCrownDistance(
+          local,
+          i,
+          isShadowRay ? 0.0 : offset.w
+        );
         if (crown.x < item.x) item = crown;
       }
       item.x *= scale;

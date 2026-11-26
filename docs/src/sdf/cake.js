@@ -31,7 +31,9 @@ import { toppingChunk } from "./topping.js";
  *   layer or a translucent decoration hidden, as `HIDE_*` and a slot name
  *   them, so a ray refracted into a translucent part can march to the
  *   part beneath; the other decorations are always drawn, so one embedded
- *   in a translucent topping shows through it.
+ *   in a translucent topping shows through it. For a shadow ray, it reads
+ *   the layers without their holes, the candles without their flames and
+ *   the decorations without their slab's shortcut.
  */
 export const cakeChunk = /* glsl */ `
   ${crumbChunk}
@@ -198,8 +200,12 @@ export const cakeChunk = /* glsl */ `
   // so the cut passes through all three and the plate's gate reads them.
   // With the topping or a layer hidden, the topping is left out, and a
   // hidden slot is left out of the stack too, as a translucent part covers
-  // what is left. A hidden decoration is left out alone.
-  vec2 cakeFieldOf(vec3 p, int hidden) {
+  // what is left. A hidden decoration is left out alone. A shadow ray
+  // reads the layers without their holes and the candles without their
+  // flames, as no light passes through crumb and a flame casts no shadow,
+  // and the decorations without their slab's shortcut, as
+  // decorationsField() says.
+  vec2 cakeFieldOf(vec3 p, int hidden, bool isShadowRay) {
     vec2 q = vec2(length(p.xz), p.y);
 
     // The part whose bound is least: a layer's slot, or -1 for the plate.
@@ -225,7 +231,7 @@ export const cakeChunk = /* glsl */ `
     if (firstSlot < 0) {
       plate = plateField(q);
     } else {
-      first = layerDistance(p, q, firstSlot);
+      first = layerDistance(p, q, firstSlot, isShadowRay);
       stack.xy = vec2(first, float(firstSlot));
     }
     stack = layersField(
@@ -236,6 +242,7 @@ export const cakeChunk = /* glsl */ `
       firstSlot,
       first,
       hidden,
+      isShadowRay,
       stack
     );
     vec2 cake = stack.xy;
@@ -243,7 +250,11 @@ export const cakeChunk = /* glsl */ `
       vec2 topping = toppingField(p, q, stack.z);
       if (topping.x < cake.x) cake = topping;
     }
-    vec2 decorations = decorationsField(p, hidden - HIDE_DECORATION_FIRST);
+    vec2 decorations = decorationsField(
+      p,
+      hidden - HIDE_DECORATION_FIRST,
+      isShadowRay
+    );
     if (decorations.x < cake.x) cake = decorations;
     cake.x = eatenStackDistance(p, cake.x);
     if (firstSlot >= 0 && plateBound < cake.x) plate = plateField(q);
@@ -253,7 +264,7 @@ export const cakeChunk = /* glsl */ `
   // The field at p with nothing hidden: cakeFieldOf()'s, as every march
   // but the one beneath a translucent part reads it.
   vec2 cakeField(vec3 p) {
-    return cakeFieldOf(p, HIDE_NONE);
+    return cakeFieldOf(p, HIDE_NONE, false);
   }
 
   // A layer, the topping and a decoration are never metals; the plate may

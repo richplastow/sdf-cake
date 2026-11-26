@@ -64,29 +64,44 @@ export const raymarchFragmentShader = /* glsl */ `
   const float SURFACE_EPSILON_METERS = 0.0001;
   // The offset either side of a hit point over which the normal is read.
   const float NORMAL_EPSILON_METERS = 0.0005;
-  // The shadow march towards a light: its most steps, where it starts, past
-  // the surface's own epsilon, how far it goes, and iq's softness, higher
-  // for a sharper shadow edge.
+  // The shadow march towards a light: its most steps, and how far it goes.
   const int MAX_SHADOW_STEPS = 48;
-  const float SHADOW_START_METERS = 0.002;
   const float SHADOW_MAX_DISTANCE_METERS = 0.5;
-  const float SHADOW_SOFTNESS = 24.0;
+  // iq's light size, unitless: the penumbra's width per metre from the
+  // caster. 0.027 spans a shadow edge's 10 to 90 % over the same width as
+  // the linear form at a softness of 24 did: 0.8 / (24 * 1.2168).
+  const float SHADOW_LIGHT_SIZE = 0.027;
+  // How far along the normal the shadow march starts, in metres: ten times
+  // SURFACE_EPSILON_METERS, so the start clears the surface even where the
+  // light grazes it. The irregularity's lumps, about 8 cm across, curve the
+  // surface no tighter than a radius of about 10 cm, even at the 2 mm cap
+  // src/cake/resolve.js sets on their amplitude, so over 1 mm a wavy
+  // surface is flat and the start clears it too.
+  const float SHADOW_NORMAL_OFFSET_METERS = 0.001;
+  // The least and most a shadow step moves, in metres: iq's 0.005 and 0.5
+  // scaled to shadows that reach 0.5 m. The least bounds a crawl along a
+  // face, at MAX_SHADOW_STEPS, to 24 mm, past the bound's margin, and is
+  // half a wick's diameter, so no wick is stepped over; the most keeps the
+  // samples dense enough not to step over a penumbra's darkest point.
+  const float SHADOW_MIN_STEP_METERS = 0.0005;
+  const float SHADOW_MAX_STEP_METERS = 0.025;
   // How far the shadow march's bound passes the cake's, in metres, so it
   // can end where its ray leaves the bound and still shade exactly as one
   // that runs its full distance. iq's soft shadow takes the least of
-  // SHADOW_SOFTNESS * d / t along the ray, so a ray passing near the cake
-  // darkens even outside the cake's cylinders. Every part lies inside its
-  // cylinder, and the cut only raises the stack's distance, so outside the
-  // cylinders grown by this margin d is at least the margin; with t at
+  // h / (SHADOW_LIGHT_SIZE * t) along the ray, so a ray passing near the
+  // cake darkens even outside the cake's cylinders. Every part lies inside
+  // its cylinder, and the cut only raises the stack's distance, so outside
+  // the cylinders grown by this margin h is at least the margin; with t at
   // most SHADOW_MAX_DISTANCE_METERS, the term is then at least 1, and
-  // cannot lower the share. About 20.8 mm.
+  // cannot lower the share. 13.5 mm.
   const float SHADOW_BOUND_MARGIN_METERS =
-    SHADOW_MAX_DISTANCE_METERS / SHADOW_SOFTNESS;
+    SHADOW_LIGHT_SIZE * SHADOW_MAX_DISTANCE_METERS;
   // The least a ray's direction may move along an axis, or across it, for
   // the cylinder test to divide by that movement: unitless, as the
   // direction is a unit vector. A ray that moves less is taken as level
-  // with the axis's slab, or parallel to the axis; with the bound's 2 mm
-  // margin, no march reaches far enough for the difference to show.
+  // with the axis's slab, or parallel to the axis; with the 2 mm margin
+  // src/cake/resolve.js grows each cylinder by, no march reaches far enough
+  // for the difference to show.
   const float MIN_SPAN_DIRECTION = 1e-6;
   // The span of a ray that misses a bound, in metres: an exit behind the
   // ray's origin.
@@ -211,27 +226,47 @@ export const raymarchFragmentShader = /* glsl */ `
   }
 
   // The share of a light that reaches p, from 0.0 in full shadow to 1.0 in
-  // none, by marching towards the light: iq's soft shadow,
-  // https://iquilezles.org/articles/rmshadows/. It ends where its ray
-  // leaves the bound grown by SHADOW_BOUND_MARGIN_METERS, past which
-  // nothing can lower the share, or at SHADOW_MAX_DISTANCE_METERS. The
-  // part beneath a translucent part is shadowed with what cakeFieldOf()
-  // hides left out, as that part would otherwise hide it from every light.
-  float lightShareAt(vec3 p, vec3 directionToLight, int hidden) {
+  // none, by marching towards the light from just off the surface, along
+  // its unit normal: iq's clamped-step soft shadow,
+  // https://iquilezles.org/articles/rmshadows/. The hit point lies within
+  // SURFACE_EPSILON_METERS of the surface, so a start along the light
+  // alone can still lie within it where the light grazes the surface, and
+  // shadow the point itself. The share is the least of h / (w * t), which
+  // turns negative inside a caster: the ray carries on through it, so the
+  // inner penumbra shades smoothly rather than in bands where samples miss
+  // its darkest point between steps, and nothing ends on a hit. Each step
+  // is clamped, so the march neither crawls along a face nor skips a thin
+  // caster, and it ends once the shadow is full. The share from -1 to 1 is
+  // then remapped by a smoothstep to 0 to 1. The march also ends where its
+  // ray, measured from its own start, leaves the bound grown by
+  // SHADOW_BOUND_MARGIN_METERS, past which nothing can lower the share, or
+  // at SHADOW_MAX_DISTANCE_METERS. The part beneath a translucent part is
+  // shadowed with what cakeFieldOf() hides left out, as that part would
+  // otherwise hide it from every light. The field is read as a shadow
+  // ray's: a holed layer's inside then lies deep enough below 0 for the
+  // march to reach full shadow, where its holes, no more than a few
+  // millimetres apart, would keep it near 0 and let light through.
+  float lightShareAt(
+    vec3 directionToLight,
+    int hidden,
+    vec3 normal,
+    vec3 p
+  ) {
+    vec3 origin = p + normal * SHADOW_NORMAL_OFFSET_METERS;
     float endMeters = min(
-      boundSpan(directionToLight, SHADOW_BOUND_MARGIN_METERS, p).y,
+      boundSpan(directionToLight, SHADOW_BOUND_MARGIN_METERS, origin).y,
       SHADOW_MAX_DISTANCE_METERS
     );
     float share = 1.0;
-    float t = SHADOW_START_METERS;
+    float t = SHADOW_MIN_STEP_METERS;
     for (int i = 0; i < MAX_SHADOW_STEPS; i++) {
-      float d = cakeFieldOf(p + directionToLight * t, hidden).x;
-      if (d < SURFACE_EPSILON_METERS) return 0.0;
-      share = min(share, SHADOW_SOFTNESS * d / t);
-      t += d;
-      if (t > endMeters) break;
+      float h = cakeFieldOf(origin + directionToLight * t, hidden, true).x;
+      share = min(share, h / (SHADOW_LIGHT_SIZE * t));
+      t += clamp(h, SHADOW_MIN_STEP_METERS, SHADOW_MAX_STEP_METERS);
+      if (share < -1.0 || t > endMeters) break;
     }
-    return share;
+    share = max(share, -1.0);
+    return 0.25 * (1.0 + share) * (1.0 + share) * (2.0 - share);
   }
 
   // Marches the ray from the start distance until it hits the cake, runs
@@ -270,10 +305,10 @@ export const raymarchFragmentShader = /* glsl */ `
     const vec2 k = vec2(1.0, -1.0);
     const float e = NORMAL_EPSILON_METERS;
     return normalize(
-      k.xyy * cakeFieldOf(p + k.xyy * e, hidden).x +
-      k.yyx * cakeFieldOf(p + k.yyx * e, hidden).x +
-      k.yxy * cakeFieldOf(p + k.yxy * e, hidden).x +
-      k.xxx * cakeFieldOf(p + k.xxx * e, hidden).x
+      k.xyy * cakeFieldOf(p + k.xyy * e, hidden, false).x +
+      k.yyx * cakeFieldOf(p + k.yyx * e, hidden, false).x +
+      k.yxy * cakeFieldOf(p + k.yxy * e, hidden, false).x +
+      k.xxx * cakeFieldOf(p + k.xxx * e, hidden, false).x
     );
   }
 
@@ -353,8 +388,12 @@ export const raymarchFragmentShader = /* glsl */ `
           directLight.direction,
           viewMatrix
         );
-        directLight.color *=
-          lightShareAt(point, directionToLight, hidden);
+        // A face turned from the light marches no shadow:
+        // RE_Direct_Physical(), which RE_Direct() names, scales the light
+        // by saturate(dotNL), 0 there, so its share changes nothing.
+        directLight.color *= dot(normal, directionToLight) > 0.0
+          ? lightShareAt(directionToLight, hidden, normal, point)
+          : 0.0;
         RE_Direct(
           directLight,
           geometryPosition,
@@ -434,7 +473,7 @@ export const raymarchFragmentShader = /* glsl */ `
     float t = 0.0;
     vec2 field = vec2(NO_SURFACE_METERS, 0.0);
     for (int i = 0; i < GLAZE_MARCH_STEPS; i++) {
-      field = cakeFieldOf(point + refracted * t, hidden);
+      field = cakeFieldOf(point + refracted * t, hidden, false);
       if (field.x < SURFACE_EPSILON_METERS || t > endMeters) break;
       t += field.x;
     }
