@@ -178,6 +178,15 @@ export const RECIPES = [
         inclusions: { chocolateChips: 0, nuts: 0, raisins: 0 },
       },
       {
+        material: "cream",
+        heightMeters: 0.006,
+        bottomRadiusMeters: 0.088,
+        topRadiusMeters: 0.088,
+        roundingMeters: 0.003,
+        irregularityMeters: 0,
+        inclusions: { chocolateChips: 0, nuts: 0, raisins: 0 },
+      },
+      {
         material: "sponge",
         heightMeters: 0.03,
         bottomRadiusMeters: 0.09,
