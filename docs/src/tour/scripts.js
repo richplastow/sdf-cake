@@ -69,22 +69,22 @@ export const SCRIPTS = [
         reveal: 2,
         text: "It’s two wheat flatbreads, filled with honey,",
       },
-      { eaten: 0, reveal: 5, text: "with sesame seeds on top." },
+      { eaten: 0, reveal: 4, text: "with sesame seeds on top." },
       {
         eaten: 1,
-        reveal: 5,
+        reveal: 4,
         text: "It was baked between two tight-fitting copper moulds,",
       },
       {
         eaten: 2,
-        reveal: 5,
+        reveal: 4,
         text:
           "and as it cooled, the escaping air formed a vacuum seal, " +
           "which is why it survived four thousand years.",
       },
       {
         eaten: 3,
-        reveal: 5,
+        reveal: 4,
         text:
           "You can go and see it today. " +
           "It’s in a food museum in Switzerland.",

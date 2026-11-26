@@ -46,7 +46,8 @@ export const toppingChunk = /* glsl */ `
   uniform float toppingThicknessMeters;
   uniform float toppingTranslucency;
   // Above 0.5 for an invisible topping, which draws nothing but still
-  // gives the scattered decorations its cap to sit on.
+  // gives the scattered decorations its cap's flat to sit within, on the
+  // part beneath it; 0 to 1 as it springs.
   uniform float toppingInvisible;
 
   // How far below the stack's top the carving copies stop, in metres, so
@@ -280,13 +281,18 @@ export const toppingChunk = /* glsl */ `
   // The height of the topping's top at a radius from the axis, in metres:
   // the cap's top raised by the pile, and the base beyond the cap. Exact
   // over the pile and the cap's flat; past the flat the cap's rim falls,
-  // which this ignores.
+  // which this ignores. An invisible topping, which draws nothing, has no
+  // top but the base, so what sits on it sits on the part beneath; its
+  // weight springs, so the height eases between the two.
   float toppingSurfaceHeight(float radius) {
     float capRadius = toppingCapRadius();
     if (toppingCoverage <= 0.0 || radius > capRadius) {
       return toppingBaseMeters;
     }
-    return toppingBaseMeters + toppingThicknessMeters +
-      toppingPileRise(radius, toppingPileRadius(capRadius));
+    return toppingBaseMeters +
+      (1.0 - clamp(toppingInvisible, 0.0, 1.0)) * (
+        toppingThicknessMeters +
+        toppingPileRise(radius, toppingPileRadius(capRadius))
+      );
   }
 `;

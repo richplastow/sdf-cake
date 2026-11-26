@@ -7,7 +7,8 @@ import { LAYER_SLOTS } from "../cake/slots.js";
  *   bottom and top radii, standing on its bottom, with its edges rounded:
  *   iq's sdCappedCone with opRound, exact. A slot of zero height is
  *   skipped. Its surface is displaced by its irregularity, and its
- *   fractal holes are cut from it, as src/sdf/crumb.js sets out.
+ *   fractal holes are cut from it beneath a skin, as
+ *   src/sdf/crumb.js sets out.
  * - The arrays hold one entry per slot, lengths in metres. `layerCrumbs`
  *   packs a slot's crumb: x its hole strength, 0 to 1, y its hole cell, z
  *   its inclusion cell and w its irregularity's amplitude, in metres;
@@ -83,15 +84,22 @@ export const layersChunk = /* glsl */ `
   }
 
   // The distance to the slot's layer, in metres, negative inside it: the
-  // plain layer with its fractal holes cut from it, or left whole where
-  // its holes are filled, as the shading colours them, or for a shadow
-  // ray, which treats the crumb as solid, as no light passes through it.
+  // plain layer with its fractal holes cut from it beneath its skin, so
+  // an outer surface shows fewer and narrower than a cut face, or left
+  // whole where its holes are filled, as the shading colours them, or for
+  // a shadow ray, which treats the crumb as solid, as no light passes
+  // through it.
   float layerDistance(vec3 p, vec2 q, int slot, bool isShadowRay) {
     if (isShadowRay || layerHoleFills[slot] > 0.5) {
       return layerPlainDistance(p, q, slot);
     }
     vec4 crumb = layerCrumbs[slot];
-    return holesDistance(p, crumb.y, layerPlainDistance(p, q, slot), crumb.x);
+    return skinnedHolesDistance(
+      p,
+      crumb.y,
+      layerPlainDistance(p, q, slot),
+      crumb.x
+    );
   }
 
   // How tall a slot must be to join the smoothed stack at the full blend,

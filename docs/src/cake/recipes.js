@@ -39,7 +39,8 @@ const CANDLE_RING = Array.from({ length: CANDLE_RING_COUNT }, (_, i) => {
  *   `yawRadians`, its turn about Y, in place of a hashed tilt and yaw.
  *   The eaten slice is cut about +X.
  * - A topping's optional `isInvisible`, when true, draws nothing of it,
- *   while scattered decorations still sit on its cap.
+ *   while scattered decorations still sit within its cap's flat, on the
+ *   layer beneath, and the reveal slider gives it no stop of its own.
  * - A topping's optional `translucency`, 0 to 1, lets the part beneath
  *   show through it, refracted and tinted by the topping's colour: 0 is
  *   opaque, and 1 clear; left out, it is 0.
@@ -417,8 +418,9 @@ export const RECIPES = [
       },
     ],
     // No real topping: an invisible one, which draws nothing but gives the
-    // scattered sesame seeds a cap to sit on. Its coverage keeps the cap,
-    // and so the seeds, within the bread's flat top.
+    // scattered sesame seeds a cap to sit within, on the bread. Its
+    // coverage keeps the cap, and so the seeds, within the bread's flat
+    // top.
     topping: {
       isInvisible: true,
       material: "flatbread",

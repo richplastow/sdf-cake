@@ -69,6 +69,11 @@ const SCORCH_THRESHOLD_RIM = 0.95;
 // on its own linear colour, unitless: a chocolate sponge's crust darkens
 // rather than lightens it.
 const DARK_CRUST_FACTOR = 0.55;
+// The filter, an sRGB `#rrggbb` colour, that a holed layer's crumb is
+// seen through at the fully occluded floor of a hole: it absorbs the blue
+// and green most, so the crumb turns a warmer, browner shade of itself.
+// Tuning value.
+const HOLE_WARM_COLOR = "#e8b48c";
 
 // The greatest semi-axis of any inclusion kind, in metres.
 const INCLUSION_REACH_METERS = Math.max(
@@ -78,7 +83,10 @@ const INCLUSION_REACH_METERS = Math.max(
 /** #### The GLSL chunk of the crumb
  * - Needs the primitives chunk, src/sdf/primitives.js, with its hashes,
  *   pasted before it. Reads no uniform: its callers pass a layer's values.
- * - holesDistance() cuts a layer's fractal holes from its distance.
+ * - holesDistance() cuts a layer's fractal holes from its distance, and
+ *   skinnedHolesDistance() cuts them beneath a skin that lets only the
+ *   larger through, narrower; warmedCrumbAlbedo() warms the crumb deep in
+ *   a hole.
  * - inclusionAt() gives the material id of the inclusion at a point inside
  *   a layer, 50 to 52, or 0 where it lies in none; inclusionAlbedoOf()
  *   and inclusionRoughnessOf() map that id to its surface.
@@ -105,6 +113,29 @@ export const crumbChunk = /* glsl */ `
     -1.60, 0.72, -0.96,
     -1.20, -0.96, 1.28
   );
+  // Turns the first octave's cells, so no face of the cake, upright or
+  // level, slices them along a row or a column of corners: half of
+  // HOLE_OCTAVE_TURN, a pure rotation, which keeps the distance exact.
+  const mat3 HOLE_BASE_TURN = 0.5 * HOLE_OCTAVE_TURN;
+  // The most a hole's centre moves from its corner along each axis, in
+  // cells, either way. With the greatest radius, half a cell, it stays
+  // under one cell, so a sphere from a corner outside the eight checked
+  // lies at least a quarter cell from the point.
+  const float HOLE_JITTER_CELLS = 0.25;
+  // The jitter's three fields of bits, one an axis, in the corner's next
+  // hash: each field's width in bits, and its greatest value.
+  const uint HOLE_JITTER_FIELD_BITS = 10u;
+  const uint HOLE_JITTER_FIELD_MASK = (1u << HOLE_JITTER_FIELD_BITS) - 1u;
+  // How deep the skin over a layer's holes is, in metres, and how far the
+  // holes that open through it shrink, as a fraction of their octave's
+  // greatest radius, unitless: the smaller holes stay shut beneath it and
+  // the larger open narrower, so an outer surface shows a lesser crumb
+  // than a cut face, about a third as many openings as measured in a port
+  // of the field. Tuning values.
+  const float HOLE_SKIN_METERS = 0.0015;
+  const float HOLE_SKIN_ERODE = 0.3;
+  // The filter that warms the crumb deep in a hole, in linear space.
+  const vec3 HOLE_WARM_COLOR = ${linearColorOf(HOLE_WARM_COLOR)};
   // The least inclusion cell, in metres: twice the greatest semi-axis, so
   // every item reaching the point lies in one of the eight cells checked.
   const float INCLUSION_LEAST_CELL_METERS = ${toGlslFloat(
@@ -158,46 +189,105 @@ export const crumbChunk = /* glsl */ `
     return lowbias32(key.x + lowbias32(key.y + lowbias32(key.z)));
   }
 
-  // The distance, in cells, to the nearest of eight spheres at the corners
+  // The distance, in cells, to the nearest of eight spheres by the corners
   // of the cell holding x, x in cells, each of a radius by its corner's
-  // hash under half a cell, times the strength: iq's sdBase,
-  // https://iquilezles.org/articles/fbmsdf/, exact.
+  // hash under half a cell, times the strength, and its centre moved from
+  // its corner by up to HOLE_JITTER_CELLS along each axis by the fields of
+  // the next hash: iq's sdBase, https://iquilezles.org/articles/fbmsdf/,
+  // with jittered centres. Exact inside every hole and within a quarter
+  // cell of one, where the surface lies; deeper in the crumb it may read
+  // the holes too far, which only lowers the field inside the solid.
   float holeSpheresDistance(vec3 x, float strength) {
     vec3 cell = floor(x);
     vec3 f = x - cell;
     float d = NO_SURFACE_METERS;
     for (int i = 0; i < 8; i++) {
       vec3 corner = vec3(float(i & 1), float((i >> 1) & 1), float(i >> 2));
-      float radius = 0.5 * strength * unitOfHash(cellHash(cell + corner));
-      d = min(d, length(f - corner) - radius);
+      uint hash = cellHash(cell + corner);
+      float radius = 0.5 * strength * unitOfHash(hash);
+      uint bits = nextHash(hash);
+      uvec3 fields = uvec3(
+        bits,
+        bits >> HOLE_JITTER_FIELD_BITS,
+        bits >> (2u * HOLE_JITTER_FIELD_BITS)
+      ) & HOLE_JITTER_FIELD_MASK;
+      vec3 jitter = HOLE_JITTER_CELLS *
+        (2.0 * vec3(fields) / float(HOLE_JITTER_FIELD_MASK) - 1.0);
+      d = min(d, length(f - corner - jitter) - radius);
     }
     return d;
   }
 
   // A layer's distance at p, in metres, with its fractal holes cut from
-  // it: HOLE_OCTAVES octaves of holeSpheresDistance(), from cells of the
-  // hole cell's edge, in metres, each subtracted by a smooth maximum of
+  // it: x bare, and y beneath its skin. HOLE_OCTAVES octaves of
+  // holeSpheresDistance(), from cells of the hole cell's edge, in metres,
+  // turned first by HOLE_BASE_TURN, each subtracted by a smooth maximum of
   // HOLE_SMOOTH_FRACTION of its cell, iq's fbm SDF,
-  // https://iquilezles.org/articles/fbmsdf/. A strength of 0, 0 to 1, or a
-  // cell of 0 cuts nothing. The cut only raises the distance, so it keeps
-  // the layer's bound, and needs no step factor, as the research measured.
+  // https://iquilezles.org/articles/fbmsdf/. A strength of 0, 0 to 1, or
+  // a cell of 0 cuts nothing. The cut only raises the distance, so it
+  // keeps the layer's bound, and needs no step factor, as the research
+  // measured. The skin is the layer's outer shell, HOLE_SKIN_METERS deep,
+  // cut by the same holes shrunk by HOLE_SKIN_ERODE, and united with the
+  // holed layer: a shrunk sphere's distance is still a bound, and so is a
+  // union of two, so no step factor changes; a port of the field measured
+  // its gradient at 1.00 near the surface.
+  vec2 holedDistances(
+    vec3 p,
+    float cellMeters,
+    float layer,
+    float strength
+  ) {
+    if (strength <= 0.0 || cellMeters <= 0.0) return vec2(layer);
+    if (layer >= CRUMB_CLIP_METERS) return vec2(layer);
+    vec3 x = HOLE_BASE_TURN * (p / cellMeters);
+    float scale = cellMeters;
+    float holed = layer;
+    float skin = max(layer, -layer - HOLE_SKIN_METERS);
+    for (int octave = 0; octave < HOLE_OCTAVES; octave++) {
+      float holes = scale * holeSpheresDistance(x, strength);
+      float blend = HOLE_SMOOTH_FRACTION * scale;
+      holed = smoothMaxDistance(holed, -holes, blend);
+      skin = smoothMaxDistance(
+        skin,
+        -holes - HOLE_SKIN_ERODE * 0.5 * strength * scale,
+        blend
+      );
+      x = HOLE_OCTAVE_TURN * x;
+      scale *= 0.5;
+    }
+    return vec2(holed, min(holed, skin));
+  }
+
+  // A layer's distance at p, in metres, with its fractal holes cut from
+  // it, as holedDistances() cuts them.
   float holesDistance(
     vec3 p,
     float cellMeters,
     float layer,
     float strength
   ) {
-    if (strength <= 0.0 || cellMeters <= 0.0) return layer;
-    if (layer >= CRUMB_CLIP_METERS) return layer;
-    vec3 x = p / cellMeters;
-    float scale = cellMeters;
-    for (int octave = 0; octave < HOLE_OCTAVES; octave++) {
-      float holes = scale * holeSpheresDistance(x, strength);
-      layer = smoothMaxDistance(layer, -holes, HOLE_SMOOTH_FRACTION * scale);
-      x = HOLE_OCTAVE_TURN * x;
-      scale *= 0.5;
-    }
-    return layer;
+    return holedDistances(p, cellMeters, layer, strength).x;
+  }
+
+  // A layer's distance at p, in metres, with its fractal holes cut from
+  // it beneath its skin, as holedDistances() cuts them: a cut face shows
+  // every hole, an outer surface only the larger, narrower.
+  float skinnedHolesDistance(
+    vec3 p,
+    float cellMeters,
+    float layer,
+    float strength
+  ) {
+    return holedDistances(p, cellMeters, layer, strength).y;
+  }
+
+  // A holed layer's albedo, warmed by how deep in a hole the point lies,
+  // 0 on the open crumb to 1 at a fully occluded floor: filtered by
+  // HOLE_WARM_COLOR to that power, so the crumb turns a warmer, browner
+  // shade of itself, as light that reaches deep into a hole has bounced
+  // off the crumb, and been absorbed by it, more often.
+  vec3 warmedCrumbAlbedo(vec3 albedo, float depth) {
+    return albedo * pow(HOLE_WARM_COLOR, vec3(depth));
   }
 
   // The material id of the inclusion holding p, or 0.0 where p lies in

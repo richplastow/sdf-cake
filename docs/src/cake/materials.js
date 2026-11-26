@@ -36,11 +36,11 @@ const ARTEMIS_SCORCH_SCALE = 1.5;
 // brown and grey.
 export const MATERIALS = {
   sponge: {
-    color: "#e9c46a",
-    roughness: 0.9,
+    color: "#eed59a",
+    roughness: 0.8,
     metalness: 0,
-    holeStrength: 1,
-    holeCellMeters: 0.004,
+    holeStrength: 0.7,
+    holeCellMeters: 0.0025,
     crust: LIGHT_CRUST,
   },
   chocolateSponge: {

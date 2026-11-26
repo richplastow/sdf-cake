@@ -24,8 +24,10 @@ const PLATE_LENGTH_KEYS = [
 /** #### Lists a recipe's parts, in the order the reveal shows them
  * - The plate, if not `null` and its rim radius is above 0; each layer of
  *   height above 0, from the bottom, with its `index` in the recipe; the
- *   topping, if not `null` and its coverage is above 0; and the
- *   decorations, as one part, if any count is above 0.
+ *   topping, if not `null`, its coverage is above 0 and it is not
+ *   invisible; and the decorations, as one part, if any count is above 0.
+ * - An invisible topping draws nothing, so a stop of its own would show
+ *   no change: presenceMaskFor() brings it in with the top layer.
  * @param recipe A recipe, as src/cake/recipes.js holds them.
  * @returns The parts, each its `kind` and, for a layer, its `index`.
  */
@@ -36,7 +38,9 @@ export const revealPartsOf = (recipe) => {
   layers.forEach((layer, index) => {
     if (layer.heightMeters > 0) parts.push({ kind: "layer", index });
   });
-  if (topping && topping.coverage > 0) parts.push({ kind: "topping" });
+  if (topping && topping.coverage > 0 && !topping.isInvisible) {
+    parts.push({ kind: "topping" });
+  }
   if (decorations.some((decoration) => decoration.count > 0)) {
     parts.push({ kind: "decorations" });
   }
@@ -71,7 +75,8 @@ export const maskResolvedCake = (cake, mask) => {
 
 /** #### Gives each part's presence at a reveal stop
  * - Stop k shows the parts 0 to k of revealPartsOf(); a part the recipe
- *   lacks is 0.
+ *   lacks is 0. An invisible topping, which has no stop, shows with the
+ *   top layer, so its cap is in place before the decorations sit on it.
  * @param recipe A recipe, as src/cake/recipes.js holds them.
  * @param stop The reveal stop, 0 to the parts' count less 1.
  * @returns `plate`, `layers`, one per recipe layer, `topping` and
@@ -84,11 +89,17 @@ export const presenceMaskFor = (recipe, stop) => {
     topping: 0,
     decorations: 0,
   };
-  revealPartsOf(recipe).forEach((part, order) => {
+  const parts = revealPartsOf(recipe);
+  parts.forEach((part, order) => {
     if (order > stop) return;
     if (part.kind === "layer") mask.layers[part.index] = 1;
     else mask[part.kind] = 1;
   });
+  const { topping } = recipe;
+  if (topping && topping.coverage > 0 && topping.isInvisible) {
+    const topLayer = parts.findLastIndex((part) => part.kind === "layer");
+    if (topLayer >= 0 && stop >= topLayer) mask.topping = 1;
+  }
   return mask;
 };
 

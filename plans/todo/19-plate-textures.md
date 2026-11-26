@@ -15,7 +15,7 @@ type: plan
   (`docs/src/cake/materials.js`) over the exact profile of
   [Plan 02](../done/02-plate-and-layers.md) in `docs/src/sdf/plate.js`.
 - Builds on [Plan 08](../done/08-crumb.md), whose holes, inclusions and
-  irregularity the stone reuses, and on [Plan 14](14-better-sponge.md),
+  irregularity the stone reuses, and on [Plan 14](../done/14-better-sponge.md),
   whose jittered octave keeps the stone's pits off a lattice; feeds
   [Plan 20](20-lighting.md), whose sheen reads over the wear.
 - The noise is Plan 08's valueNoise(), after iq's

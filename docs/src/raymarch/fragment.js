@@ -64,6 +64,18 @@ export const raymarchFragmentShader = /* glsl */ `
   const float SURFACE_EPSILON_METERS = 0.0001;
   // The offset either side of a hit point over which the normal is read.
   const float NORMAL_EPSILON_METERS = 0.0005;
+  // The ambient occlusion of a holed layer's cavities: the hole strength,
+  // unitless, up to which it fades in from none, under every holed
+  // material's, so a strength springing to or from 0 never switches it in
+  // one frame; how many times the layer is read along the normal, how far
+  // apart, in metres; how strongly the shortfall, in steps, darkens,
+  // unitless; and the depth below the plain layer, in metres, over which
+  // it fades in, so only a cavity reads it. Tuning values.
+  const float AO_DEPTH_FADE_METERS = 0.0002;
+  const float AO_FADE_STRENGTH = 0.1;
+  const int AO_SAMPLES = 4;
+  const float AO_STEP_METERS = 0.001;
+  const float AO_STRENGTH = 2.0;
   // The shadow march towards a light: its most steps, and how far it goes.
   const int MAX_SHADOW_STEPS = 48;
   const float SHADOW_MAX_DISTANCE_METERS = 0.5;
@@ -312,6 +324,64 @@ export const raymarchFragmentShader = /* glsl */ `
     );
   }
 
+  // The ambient occlusion of a holed layer's cavities at p, 0 fully
+  // occluded to 1 open, from AO_SAMPLES reads along its unit normal,
+  // AO_STEP_METERS apart: each read's shortfall from its own distance
+  // along the normal, in steps, weighted by 1 / 2^i, summed, scaled by
+  // AO_STRENGTH and taken from 1. iq's SDF ambient occlusion, from his
+  // Rendering Worlds with Two Triangles,
+  // https://iquilezles.org/articles/nvscene2008/.
+  //
+  // It reads the slot's own layer alone, holed beneath its skin, with the
+  // half-space beyond the eaten slice's face on p's side cut from it, so
+  // only the crumb's own holes occlude. The whole field would also read
+  // the decorations' slab and the scatter's clamp, lower bounds that lie
+  // millimetres short of the true distance and darkened a band round the
+  // layers and the honey cake's invisible cap, and the facing cut face
+  // across a narrow slice, which darkened its apex.
+  //
+  // Only a cavity occludes. The plain layer cut by the face is convex, but
+  // for its gentle irregularity, so a point on its surface sees none of it
+  // above its tangent plane. Its edges are sharp, though, where a cut face
+  // meets an outer surface or a hole's rim, so the normal is blended
+  // across them, and reads along it meet the corner, where max() lies
+  // short of the true distance: every such edge read as a cavity. So the
+  // occlusion fades in with p's depth below the plain surface over
+  // AO_DEPTH_FADE_METERS, and a point on it reads none.
+  float occlusionAt(vec3 normal, vec3 p, int slot) {
+    // The eaten slice's face on p's side: its unit normal in xz, pointing
+    // out of the cake into the slice, and, with nothing eaten, an offset
+    // that puts it too far off to cut anything.
+    float halfAngle = 0.5 * eatenAngleRadians;
+    vec2 faceNormal = vec2(
+      sin(halfAngle),
+      (p.z < 0.0 ? 1.0 : -1.0) * cos(halfAngle)
+    );
+    float faceOffset = eatenAngleRadians > 0.0 ? 0.0 : -NO_SURFACE_METERS;
+    float depth = -max(
+      layerPlainDistance(p, vec2(length(p.xz), p.y), slot),
+      dot(p.xz, faceNormal) + faceOffset
+    );
+    if (depth <= 0.0) return 1.0;
+    float shortfall = 0.0;
+    float weight = 0.5;
+    for (int i = 1; i <= AO_SAMPLES; i++) {
+      float along = float(i) * AO_STEP_METERS;
+      vec3 s = p + normal * along;
+      float d = max(
+        layerDistance(s, vec2(length(s.xz), s.y), slot, false),
+        dot(s.xz, faceNormal) + faceOffset
+      );
+      shortfall += weight * (along - d) / AO_STEP_METERS;
+      weight *= 0.5;
+    }
+    return mix(
+      1.0,
+      clamp(1.0 - AO_STRENGTH * shortfall, 0.0, 1.0),
+      smoothstep(0.0, AO_DEPTH_FADE_METERS, depth)
+    );
+  }
+
   // The world-space direction of the ray through the fragment: the far
   // plane's point in view space, by the inverse projection, turned into the
   // world by the camera's world matrix.
@@ -325,10 +395,10 @@ export const raymarchFragmentShader = /* glsl */ `
   // Three.js's ReflectedLight: the material at it, as
   // lights_physical_fragment builds it for a mesh without maps, lit by each
   // directional light, shadowed by the cake, and by the ambient and
-  // hemisphere lights. It takes the material id, the unit normal and the
-  // point in the world, the unit direction from the point towards the
-  // viewer, and what the cake's shadows leave out, as cakeFieldOf() takes
-  // it.
+  // hemisphere lights, with a holed layer's cavities warmed and occluded.
+  // It takes the material id, the unit normal and the point in the world,
+  // the unit direction from the point towards the viewer, and what the
+  // cake's shadows leave out, as cakeFieldOf() takes it.
   ReflectedLight shadeAt(
     float materialId,
     vec3 normal,
@@ -336,7 +406,24 @@ export const raymarchFragmentShader = /* glsl */ `
     vec3 toViewer,
     int hidden
   ) {
+    // A holed layer's cavities: their occlusion, faded in with the hole
+    // strength up to AO_FADE_STRENGTH, warms the albedo by its depth, and
+    // scales the indirect light once that is in. A layer whose holes are
+    // filled, as layerDistance() reads it, has none.
+    float occlusion = 1.0;
+    if (materialId < MATERIAL_PLATE - 0.5) {
+      int slot = int(materialId + 0.5);
+      float holeStrength = layerCrumbs[slot].x;
+      if (holeStrength > 0.0 && layerHoleFills[slot] <= 0.5) {
+        occlusion = mix(
+          1.0,
+          occlusionAt(normal, point, slot),
+          min(holeStrength / AO_FADE_STRENGTH, 1.0)
+        );
+      }
+    }
     vec3 albedo = cakeAlbedoOf(materialId, point);
+    if (occlusion < 1.0) albedo = warmedCrumbAlbedo(albedo, 1.0 - occlusion);
     float metalness = cakeMetalnessOf(materialId);
     PhysicalMaterial material;
     material.diffuseColor = albedo;
@@ -428,6 +515,19 @@ export const raymarchFragmentShader = /* glsl */ `
       material,
       reflectedLight
     );
+
+    // A holed layer's cavities, occluded once both indirect terms are in,
+    // as Three.js's aomap_fragment chunk applies an occlusion map: the
+    // diffuse scaled by the occlusion, the specular by
+    // computeSpecularOcclusion(), from lights_physical_pars_fragment.
+    if (occlusion < 1.0) {
+      reflectedLight.indirectDiffuse *= occlusion;
+      reflectedLight.indirectSpecular *= computeSpecularOcclusion(
+        dotNV,
+        occlusion,
+        material.roughness
+      );
+    }
     return reflectedLight;
   }
 
