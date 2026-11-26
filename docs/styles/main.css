@@ -23,7 +23,7 @@
   /* a disabled arrow button's opacity, greyed out on the tour's dialog
      pages */
   --disabled-opacity: 0.4;
-  /* the tour's dialogs and the guess prompt: a panel in the page's
+  /* the tour's dialogs, its prompt and the caption: a panel in the page's
      colours */
   --panel-background: light-dark(rgb(255 255 255 / 0.9), rgb(0 0 0 / 0.75));
   --panel-color: CanvasText;
@@ -33,9 +33,28 @@
   --dialog-max-width: 32rem;
   --dialog-gutter: 1rem; /* the least from the dialog to the viewport */
   --prompt-offset: 1.5rem; /* the prompt's from the viewport's top */
-  /* the least from the prompt to the viewport's sides, clearing the reveal
-     slider up the right */
-  --prompt-side-clearance: 4rem;
+  /* the least from the prompt to the viewport's sides, clearing the
+     Play/Pause button at the top right, and so the reveal slider below it,
+     which sits no further in */
+  --prompt-side-clearance: calc(
+    var(--controls-inset) + var(--play-button-size) + var(--controls-gap)
+  );
+  /* the caption of a presentation cake, a subtitle at the bottom centre */
+  --caption-font-size: 1.125rem;
+  --caption-gap: 0.25rem; /* between the caption's title and its text */
+  --caption-max-width: 40rem;
+  --caption-offset: 0.75rem; /* the caption's above the toolbar */
+  /* the least from the caption to the viewport's sides, clearing the
+     reveal slider up the right */
+  --caption-side-clearance: 4rem;
+  --caption-title-font-size: 0.875rem;
+  /* the Play/Pause button at the top right: a disc like the arrow
+     buttons', in the page's colours */
+  --play-button-background: var(--cake-arrow-background);
+  --play-button-color: var(--cake-arrow-color);
+  --play-button-icon-size: var(--cake-arrow-icon-size);
+  --play-button-offset: 1.5rem; /* the button's from the viewport's top */
+  --play-button-size: var(--cake-arrow-size); /* its width and height */
   --eaten-length: 40vw; /* the eaten slider's length, at least 12rem */
   --eaten-min-length: 12rem;
   --reveal-length: 40vh; /* the reveal slider's length, up the right */
@@ -203,7 +222,7 @@ body {
 }
 
 /*
- * The guess prompt, src/ui/prompt.js, at the top centre of the viewport
+ * The tour's prompt, src/ui/prompt.js, at the top centre of the viewport
  * and outside the controls, so Escape never hides it. Only the prompt
  * shown, the one child without `hidden`, draws a panel.
  */
@@ -230,4 +249,89 @@ body {
 
 .prompt > * > :last-child {
   margin-block-end: 0;
+}
+
+/*
+ * The Play/Pause button, src/ui/play-button.js, fixed at the top right,
+ * out of the bar's flow as the reveal slider is, and hidden with the rest
+ * of the controls by Escape. Its `data-action` names the action it takes,
+ * and shows that action's icon; its `aria-label` names it. Its focus ring
+ * is the browser's own.
+ */
+.play-button {
+  position: fixed;
+  top: var(--play-button-offset);
+  right: var(--controls-inset);
+  display: grid;
+  place-items: center;
+  width: var(--play-button-size);
+  height: var(--play-button-size);
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background-color: var(--play-button-background);
+  color: var(--play-button-color);
+  cursor: pointer;
+}
+
+.play-button[hidden] {
+  display: none;
+}
+
+.play-button:focus-visible {
+  outline: auto;
+}
+
+.play-button:disabled {
+  cursor: default;
+  opacity: var(--disabled-opacity);
+}
+
+.play-button svg {
+  grid-area: 1 / 1;
+  width: var(--play-button-icon-size);
+  height: var(--play-button-icon-size);
+  fill: currentColor;
+}
+
+.play-button:not([data-action="play"]) [data-icon="play"],
+.play-button:not([data-action="pause"]) [data-icon="pause"] {
+  display: none;
+}
+
+/*
+ * The caption of a presentation cake, src/ui/caption.js: a subtitle at
+ * the bottom centre, just above the toolbar and clear of the reveal slider,
+ * outside the controls, so Escape never hides it. Centred by auto margins
+ * in a box spanning the viewport, shrunk to its text. The pointer passes
+ * through it to the canvas.
+ */
+.caption {
+  position: fixed;
+  inset-inline: 0;
+  bottom: calc(
+    var(--controls-offset) + var(--cake-arrow-size) + var(--caption-offset)
+  );
+  inline-size: fit-content;
+  max-inline-size: min(
+    var(--caption-max-width),
+    100% - 2 * var(--caption-side-clearance)
+  );
+  margin-inline: auto;
+  padding: var(--panel-padding);
+  border-radius: var(--panel-radius);
+  background-color: var(--panel-background);
+  color: var(--panel-color);
+  font-size: var(--caption-font-size);
+  text-align: center;
+  pointer-events: none;
+}
+
+.caption > h2 {
+  margin: 0 0 var(--caption-gap);
+  font-size: var(--caption-title-font-size);
+}
+
+.caption > p {
+  margin: 0;
 }

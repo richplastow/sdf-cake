@@ -1,4 +1,4 @@
-/** #### Connects the guess prompt, and gives the setter that shows one
+/** #### Connects the tour's prompt, and gives the setter that shows one
  * - Finds the `.prompt` element index.html holds, and its parts by their
  *   `data-prompt` attribute, which names the kinds each part shows for,
  *   space-separated, and calls the handler on a click of the one Reveal
@@ -9,9 +9,11 @@
  * - Throws at once if the page has no `.prompt`.
  * @param handlers `onReveal`, called with no arguments on Reveal.
  * @returns `showPrompt`, which takes `"up"`, `"bite"`, `"guess"`,
- *   `"blocked-up"`, `"blocked-reveal"`, `"name"`, `"name-next"`,
- *   `"name-deeper"` or `null` for none, and the cake's name for the name
- *   prompts.
+ *   `"blocked-up"`, `"blocked-reveal"`, `"name"`, `"name-next"` or
+ *   `"name-deeper"`, the guess flow's, `"end"`, autoplay's at the end of
+ *   a presentation cake, `"next-up"`, `"next-right"`, `"back-down"` or
+ *   `"back-left"`, src/tour/path.js's hint for a blocked move, or `null`
+ *   for none, and the cake's name for the name prompts.
  */
 export const connectPrompt = ({ onReveal }) => {
   const prompt = document.querySelector(".prompt");

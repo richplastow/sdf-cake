@@ -4,6 +4,24 @@
  * src/cake/materials.js: first guesses to tune by eye.
  */
 
+// The Artemis offering's candle ring: how many candles, how far out, in
+// metres, and the angle of the first from +X, the eaten slice's axis, in
+// radians. With nine, the first at 20 degrees, the candles sit 40 degrees
+// apart, symmetric about the slice.
+const CANDLE_RING_COUNT = 9;
+const CANDLE_RING_RADIUS_METERS = 0.06;
+const CANDLE_RING_FIRST_RADIANS = Math.PI / 9;
+
+// The ring's candles, each an `at` point on the top.
+const CANDLE_RING = Array.from({ length: CANDLE_RING_COUNT }, (_, i) => {
+  const angle =
+    CANDLE_RING_FIRST_RADIANS + (2 * Math.PI * i) / CANDLE_RING_COUNT;
+  return {
+    xMeters: CANDLE_RING_RADIUS_METERS * Math.cos(angle),
+    zMeters: CANDLE_RING_RADIUS_METERS * Math.sin(angle),
+  };
+});
+
 /** #### The twelve cakes, in the order the tour visits them
  * - Each `id` is assigned here, never derived, and is what the location
  *   hash and later features quote.
@@ -491,11 +509,21 @@ export const RECIPES = [
       dripMeters: 0.012,
       dripWaves: 13,
     },
+    // Nine candles on an even ring, 60 mm out and 40 degrees apart, at 20,
+    // 60, 100 and 140 degrees either side of the slice's +X axis and one at
+    // 180. Each eaten step's cut, 0.04 to 0.93 of a turn, falls 27 degrees
+    // past a candle and 13 short of the next, clear of both, so a step
+    // takes a pair whole and never shows a candle cut in half.
     decorations: [
-      { kind: "candle", count: 9, color: "#f4f4f8" },
+      ...CANDLE_RING.map((at) => ({
+        at,
+        color: "#f4f4f8",
+        count: 1,
+        kind: "candle",
+      })),
       { kind: "flake", count: 100, color: "#d4d8e0" },
     ],
-    eaten: { steps: 5, minFraction: 0.1, maxFraction: 0.7 },
+    eaten: { steps: 5, minFraction: 0.04, maxFraction: 0.93 },
   },
   {
     id: "sachertorte",

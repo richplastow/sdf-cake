@@ -15,8 +15,13 @@
  * next on springs, its decorations sinking away first and the next cake's
  * dropping in last, with the location hash kept in step. The reveal slider up
  * the right, Up and Down take the cake apart part by part, and Escape hides and
- * shows the controls. The camera stays fitted to the cake. That is the whole of
- * Presentation Mode, the only mode so far.
+ * shows the controls. Each presentation cake with a script,
+ * src/tour/scripts.js, captions where its sliders are, and autoplays,
+ * src/tour/autoplay.js: the visitor's own arrow or slider pauses it, and the
+ * Play/Pause button at the top right resumes it. There the visitor's moves
+ * keep to autoplay's path, src/tour/path.js, one stop at a time, and a
+ * blocked one prompts the key that works. The camera stays fitted to the
+ * cake. That is the whole of Presentation Mode, the only mode so far.
  */
 
 import {
@@ -60,6 +65,16 @@ import { createLights } from "./scene/lights.js";
 import { createRaymarchQuad } from "./scene/quad.js";
 import { writeCakeUniforms } from "./sdf/cake.js";
 import {
+  createAutoplay,
+  isAtEnd,
+  isEndPromptDue,
+  noteRight as noteRightAtEnd,
+  pause,
+  play,
+  stepAutoplay,
+} from "./tour/autoplay.js";
+import { beatIndexAt } from "./tour/beats.js";
+import {
   canWalkOn,
   createGuess,
   noteBlocked,
@@ -77,10 +92,19 @@ import {
   pageIndexForHash,
   previousPageIndex,
 } from "./tour/pages.js";
+import {
+  gateMove,
+  hintOf,
+  pathOf,
+  startRevealMaxOf,
+} from "./tour/path.js";
+import { SCRIPTS } from "./tour/scripts.js";
 import { connectCakeArrows } from "./ui/cake-arrows.js";
+import { connectCaption } from "./ui/caption.js";
 import { connectControlsToggle } from "./ui/controls-toggle.js";
 import { connectDialogs } from "./ui/dialogs.js";
 import { connectKeys } from "./ui/keys.js";
+import { connectPlayButton } from "./ui/play-button.js";
 import { connectPrompt } from "./ui/prompt.js";
 import { connectSliders } from "./ui/sliders.js";
 
@@ -182,6 +206,12 @@ const revealMaxOf = (recipe) => revealPartsOf(recipe).length - 1;
 const isCakePage = (page) =>
   page.kind === "guess" || page.kind === "presentation";
 
+/** Gives a `presentation` page's script, or `null` if it has none. */
+const scriptFor = (page) =>
+  page.kind === "presentation"
+    ? (SCRIPTS.find((script) => script.pageId === page.id) ?? null)
+    : null;
+
 /** #### Gives a recipe's index in `RECIPES` for a cake page
  * - A page that shows no cake holds the current recipe, `heldIndex`.
  */
@@ -207,6 +237,16 @@ let guess =
   PAGES[pageIndex].kind === "guess"
     ? createGuess(isLastGuessPage(pageIndex, PAGES))
     : null;
+// The current page's script, and its autoplay, created afresh on each
+// arrival at a page with a script, else `null`.
+let script = scriptFor(PAGES[pageIndex]);
+let autoplay = script === null ? null : createAutoplay();
+// The current script's autoplay path, which the visitor's moves keep to,
+// built afresh on each arrival at a page with a script, else `null`.
+let path = script === null ? null : pathOf(script.beats);
+// The hint a blocked move shows, as hintOf() gives it, until the sliders
+// next move or the page changes, else `null`.
+let hint = null;
 // How fast the cake's motion and the camera's fit run, unitless: 1 but
 // while a walk back runs slower, until the next change.
 let transitionTimeScale = 1;
@@ -296,6 +336,8 @@ const showPageControls = () => {
  *   snapRevealStop(), so the cake arrives taken apart as far as the last
  *   one was; coming from a page that shows no cake, it starts at stop 0,
  *   so the plate grows from nothing.
+ * - On a page with a script, the reveal stop is capped by
+ *   startRevealMaxOf(), so a walk back lands on autoplay's path.
  * - A page that shows no cake holds the current recipe with every part
  *   hidden, so the cake and its plate shrink away.
  * - Retargets the motion from where it is; under reduced motion the cake
@@ -321,8 +363,13 @@ const goToPage = (index, timeScale = 1) => {
   }
   guess =
     page.kind === "guess" ? createGuess(isLastGuessPage(index, PAGES)) : null;
+  script = scriptFor(page);
+  autoplay = script === null ? null : createAutoplay();
+  path = script === null ? null : pathOf(script.beats);
+  hint = null;
   // The cap holds on arrival too, since snapRevealStop() can give the top.
   revealStop = Math.min(revealStop, revealCapNow());
+  if (path !== null) revealStop = Math.min(revealStop, startRevealMaxOf(path));
   retargetCakeMotion(motion, stageCake(RECIPES[cakeIndex]), {
     reducedMotion: reducedMotion.matches,
   });
@@ -347,20 +394,26 @@ const writeHash = () => {
   );
 };
 
-/** #### Sets the eaten step within the current cake, easing the slice */
+/** #### Sets the eaten step within the current cake, easing the slice
+ * - Ends any hint, as the sliders have moved.
+ */
 const setEatenStep = (step) => {
   transitionTimeScale = 1;
   eatenStep = step;
+  hint = null;
   retargetSlice(motion, eatenAngleForStep(RECIPES[cakeIndex].eaten, step), {
     reducedMotion: reducedMotion.matches,
   });
   showSliders();
 };
 
-/** #### Sets the reveal stop within the current cake, easing the parts */
+/** #### Sets the reveal stop within the current cake, easing the parts
+ * - Ends any hint, as the sliders have moved.
+ */
 const setRevealStop = (stop) => {
   transitionTimeScale = 1;
   revealStop = stop;
+  hint = null;
   retargetPresence(motion, stageCake(RECIPES[cakeIndex]), {
     reducedMotion: reducedMotion.matches,
   });
@@ -414,25 +467,47 @@ const stepReveal = (delta) => {
   return true;
 };
 
+/** #### Gives the stops a visitor's slider move may take now
+ * - On a page with a script, gateMove() keeps it to autoplay's path, one
+ *   stop at a time, and a blocked move sets the hint for the key that
+ *   works; elsewhere every move passes whole.
+ * @param delta The stops asked for, negative for back.
+ * @param slider The slider to move, `"eaten"` or `"reveal"`.
+ * @returns The stops to move.
+ */
+const gatedDeltaOf = (delta, slider) => {
+  if (path === null || delta === 0) return delta;
+  const allowed = gateMove(delta, eatenStep, path, revealStop, slider);
+  if (allowed === 0) hint = hintOf(delta, eatenStep, path, revealStop);
+  return allowed;
+};
+
 /** #### Steps the reveal slider for the visitor's Up or Down
- * - Does nothing on a page that shows no cake; on a `guess` page, a
+ * - Does nothing on a page that shows no cake. Pauses autoplay first, then
+ *   keeps to autoplay's path by gatedDeltaOf(); on a `guess` page, a
  *   change is noted as the visitor's, which ends the Up prompt.
  * @param delta The stops to move, −1 or 1.
  */
 const revealByVisitor = (delta) => {
   if (!isCakePage(PAGES[pageIndex])) return;
+  if (autoplay !== null) pause(autoplay);
+  if (gatedDeltaOf(delta, "reveal") === 0) return;
   if (stepReveal(delta) && guess !== null) noteRevealByVisitor(guess);
 };
 
 /** #### Handles the visitor's Left, by key or button
+ * - Pauses autoplay first, so a walk back leaves the page it reaches
+ *   autoplaying afresh.
  * - Does nothing on the welcome page; on an interlude, goes back one page,
- *   slowly; on a cake page, steps the eaten slider back.
+ *   slowly; on a cake page, steps the eaten slider back, if
+ *   gatedDeltaOf() allows it.
  */
 const goLeft = () => {
+  if (autoplay !== null) pause(autoplay);
   const page = PAGES[pageIndex];
   if (page.kind === "welcome") return;
   if (isCakePage(page)) {
-    stepEaten(-1);
+    if (gatedDeltaOf(-1, "eaten") !== 0) stepEaten(-1);
     return;
   }
   const previous = previousPageIndex(pageIndex, PAGES);
@@ -440,13 +515,40 @@ const goLeft = () => {
 };
 
 /** #### Handles the visitor's Right, by key or button
- * - Does nothing on a page that shows no cake; on a `guess` page, it is
- *   noted first, so it lifts the reveal cap.
+ * - Does nothing on a page that shows no cake. It is noted first: on a
+ *   `guess` page, so it lifts the reveal cap; with autoplay, which it
+ *   pauses, so at the end it dismisses the end prompt, and a walk on
+ *   leaves the next cake autoplaying afresh. Then it steps the eaten
+ *   slider, if gatedDeltaOf() allows it.
  */
 const goRight = () => {
   if (!isCakePage(PAGES[pageIndex])) return;
   if (guess !== null) noteRight(guess);
-  stepEaten(1);
+  if (autoplay !== null) {
+    pause(autoplay);
+    noteRightAtEnd(autoplay);
+  }
+  if (gatedDeltaOf(1, "eaten") !== 0) stepEaten(1);
+};
+
+/** #### Gives the prompt to show now
+ * - The guess flow's on a `guess` page; else a blocked move's hint; else
+ *   `"end"` once autoplay's end prompt is due; else `null`, for none.
+ */
+const promptKindNow = () => {
+  if (guess !== null) return promptOf(guess, revealStop, revealMax);
+  if (hint !== null) return hint;
+  return autoplay !== null && isEndPromptDue(autoplay) ? "end" : null;
+};
+
+/** #### Gives the action the Play/Pause button takes now
+ * - `"pause"` while autoplay plays short of the end; `"play"` while it is
+ *   paused or at the end, where it has stopped; `null` with no autoplay,
+ *   which hides the button.
+ */
+const playActionNow = () => {
+  if (autoplay === null) return null;
+  return autoplay.isPaused || isAtEnd(autoplay) ? "play" : "pause";
 };
 
 /** #### Places the rig and the camera to show the view
@@ -527,14 +629,26 @@ canvas.addEventListener("dblclick", () => startViewReset(viewReset, view));
 
 // The sliders' `input` events, from a key, a click or a drag, retarget
 // within the cake; neither walks to another cake. Only the visitor fires
-// them, so a reveal change is noted as the visitor's. A click or drag past
-// the reveal cap snaps the slider back to it.
+// them, so each pauses autoplay first, and a reveal change is noted as the
+// visitor's. On a page with a script, gatedDeltaOf() takes each event at
+// most one stop along autoplay's path. A click or drag past the reveal cap
+// or the path snaps the slider back.
 const sliders = connectSliders(controls, {
-  onEaten: (step) => {
-    if (step !== eatenStep) setEatenStep(step);
+  onEaten: (input) => {
+    if (autoplay !== null) pause(autoplay);
+    const step = eatenStep + gatedDeltaOf(input - eatenStep, "eaten");
+    if (step === eatenStep) {
+      showSliders();
+      return;
+    }
+    setEatenStep(step);
   },
   onReveal: (input) => {
-    const stop = Math.min(input, revealCapNow());
+    if (autoplay !== null) pause(autoplay);
+    const stop = Math.min(
+      revealStop + gatedDeltaOf(input - revealStop, "reveal"),
+      revealCapNow(),
+    );
     if (stop === revealStop) {
       showSliders();
       return;
@@ -563,9 +677,19 @@ const dialogs = connectDialogs({
     goToPage(pageIndexForHash(DIALOG_TARGET_IDS[pageKey], PAGES));
   },
 });
-const guessPrompt = connectPrompt({
+const tourPrompt = connectPrompt({
   onReveal: () => {
     if (guess !== null) noteReveal(guess);
+  },
+});
+const caption = connectCaption();
+// The Play/Pause button takes the action it shows: Play resumes autoplay
+// from the beat the sliders are at, and Pause pauses it.
+const playButton = connectPlayButton(controls, {
+  onPress: () => {
+    if (autoplay === null) return;
+    if (autoplay.isPaused) play(autoplay);
+    else pause(autoplay);
   },
 });
 showSliders();
@@ -635,9 +759,27 @@ renderer.setAnimationLoop((timestampMs) => {
   if (guess !== null && stepGuess(guess, deltaSeconds, revealStop)) {
     stepReveal(1);
   }
-  guessPrompt.showPrompt(
-    guess === null ? null : promptOf(guess, revealStop, revealMax),
-    PAGES[pageIndex].cakeName,
+  // Autoplay moves the sliders through the setters, never as the visitor,
+  // so its own moves never pause it.
+  if (autoplay !== null) {
+    const move = stepAutoplay(
+      autoplay,
+      script.beats,
+      deltaSeconds,
+      eatenStep,
+      revealStop,
+    );
+    if (move === "eaten") setEatenStep(eatenStep + 1);
+    else if (move === "reveal") setRevealStop(revealStop + 1);
+  }
+  tourPrompt.showPrompt(promptKindNow(), PAGES[pageIndex].cakeName);
+  caption.showCaption(
+    script,
+    script === null ? 0 : beatIndexAt(script.beats, eatenStep, revealStop),
+  );
+  playButton.showPlayButton(
+    playActionNow(),
+    autoplay !== null && isAtEnd(autoplay),
   );
   stepCakeMotion(motion, transitionTimeScale * deltaSeconds);
   writeCakeUniforms(quad.material.uniforms, motion.values);

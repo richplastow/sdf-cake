@@ -15,7 +15,7 @@ type: plan
   [Plan 05](./05-transitions.md) and
   [Plan 07](./07-sliders.md), and the twelve cakes of
   [Plan 10](./10-presentation-prep.md).
-- Feeds [Plan 13](../todo/13-autoplay-presentation.md), which turns the cakes from
+- Feeds [Plan 13](./13-autoplay-presentation.md), which turns the cakes from
   `#pancake` to `#custard-pie` into an autoplaying presentation. Until it
   lands, those cakes walk by hand as they do today.
 - Dialogs use the HTML `<dialog>` element,
