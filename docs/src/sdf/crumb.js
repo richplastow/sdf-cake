@@ -54,14 +54,15 @@ const CRUST_DEPTH_METERS = 0.0025;
 // unitless, at the rim and at the centre, lower in the middle so the
 // patches cluster there within SCORCH_CENTRE_METERS of the axis, and its
 // softness. Each layer's slot, plus its material's scorch seed, shifts the
-// noise by SCORCH_SLOT_SHIFT_METERS, so stacked layers scorch differently.
-// Tuning values.
+// noise by SCORCH_SLOT_SHIFT_CELLS, in cells of the noise, so stacked layers
+// scorch differently, and a change of scale zooms the pattern about the
+// cake's axis instead of sliding it. Tuning values.
 const SCORCH_CELL_METERS = 0.03;
 const SCORCH_CENTRE_METERS = 0.07;
 const SCORCH_COLOR = "#1c120b";
 const SCORCH_VARIED_BROWN = "#3b2a1f";
 const SCORCH_VARIED_GREY = "#58554f";
-const SCORCH_SLOT_SHIFT_METERS = 1.37;
+const SCORCH_SLOT_SHIFT_CELLS = 37; // whole cells, per slot or seed step
 const SCORCH_SOFTNESS = 0.35;
 const SCORCH_THRESHOLD_CENTRE = 0.25;
 const SCORCH_THRESHOLD_RIM = 0.95;
@@ -169,8 +170,8 @@ export const crumbChunk = /* glsl */ `
   const vec3 SCORCH_COLOR = ${linearColorOf(SCORCH_COLOR)};
   const vec3 SCORCH_VARIED_BROWN = ${linearColorOf(SCORCH_VARIED_BROWN)};
   const vec3 SCORCH_VARIED_GREY = ${linearColorOf(SCORCH_VARIED_GREY)};
-  const float SCORCH_SLOT_SHIFT_METERS = ${toGlslFloat(
-    SCORCH_SLOT_SHIFT_METERS,
+  const float SCORCH_SLOT_SHIFT_CELLS = ${toGlslFloat(
+    SCORCH_SLOT_SHIFT_CELLS,
   )};
   const float SCORCH_SOFTNESS = ${toGlslFloat(SCORCH_SOFTNESS)};
   const float SCORCH_THRESHOLD_CENTRE = ${toGlslFloat(
@@ -342,12 +343,11 @@ export const crumbChunk = /* glsl */ `
     ];
   }
 
-  // Smooth value noise at p, 0 to 1, of cells the edge given, in metres:
-  // each corner's hash blended by smoothstep, iq's value noise,
-  // https://iquilezles.org/articles/morenoise/, in 3D so sides mark as
-  // tops do.
-  float valueNoise(vec3 p, float cellMeters) {
-    vec3 x = p / cellMeters;
+  // Smooth value noise at x, 0 to 1, with x in cells, so one unit of x
+  // crosses one cell: each corner's hash blended by smoothstep, iq's value
+  // noise, https://iquilezles.org/articles/morenoise/, in 3D so sides mark
+  // as tops do.
+  float valueNoiseInCells(vec3 x) {
     vec3 cell = floor(x);
     vec3 f = x - cell;
     vec3 u = f * f * (3.0 - 2.0 * f);
@@ -371,14 +371,21 @@ export const crumbChunk = /* glsl */ `
     );
   }
 
+  // Smooth value noise at p, in metres, 0 to 1, of cells the edge given,
+  // in metres.
+  float valueNoise(vec3 p, float cellMeters) {
+    return valueNoiseInCells(p / cellMeters);
+  }
+
   // A layer's scorch colour at p, 0 to 1 deep, as its alpha, and its
-  // colour: two octaves of valueNoise(), shifted by the slot and the
-  // seed, a whole number, against a threshold that falls towards the axis
-  // as far as the clustering, 0 even to 1 full, takes it, and by the
-  // coverage, so soft patches gather in the middle or spread evenly. The
-  // scorch packs its strength, unitless,
-  // its scale of SCORCH_CELL_METERS, its variety, 0 plain to 1 ranging
-  // between muted brown and grey, and its coverage, unitless.
+  // colour: two octaves of valueNoiseInCells(), shifted by the slot and the
+  // seed, a whole number, by SCORCH_SLOT_SHIFT_CELLS cells each, so a
+  // change of scale zooms the pattern about the axis, against a threshold
+  // that falls towards the axis as far as the clustering, 0 even to 1 full,
+  // takes it, and by the coverage, so soft patches gather in the middle or
+  // spread evenly. The scorch packs its strength, unitless, its scale of
+  // SCORCH_CELL_METERS, its variety, 0 plain to 1 ranging between muted
+  // brown and grey, and its coverage, unitless.
   vec4 scorchAt(
     vec3 p,
     int slot,
@@ -386,10 +393,11 @@ export const crumbChunk = /* glsl */ `
     float seed,
     float clustering
   ) {
-    vec3 shifted = p + (float(slot) + seed) * SCORCH_SLOT_SHIFT_METERS;
     float cell = SCORCH_CELL_METERS * scorch.y;
-    float noise = 0.65 * valueNoise(shifted, cell) +
-      0.35 * valueNoise(shifted, 0.5 * cell);
+    vec3 shifted = p / cell +
+      (float(slot) + seed) * SCORCH_SLOT_SHIFT_CELLS;
+    float noise = 0.65 * valueNoiseInCells(shifted) +
+      0.35 * valueNoiseInCells(2.0 * shifted);
     float centre = clustering * (1.0 - smoothstep(
       0.0,
       SCORCH_CENTRE_METERS,
@@ -405,7 +413,7 @@ export const crumbChunk = /* glsl */ `
     vec3 varied = mix(
       SCORCH_VARIED_BROWN,
       SCORCH_VARIED_GREY,
-      valueNoise(shifted.zxy, 0.7 * cell)
+      valueNoiseInCells(shifted.zxy / 0.7)
     );
     return vec4(mix(SCORCH_COLOR, varied, scorch.z), depth);
   }

@@ -77,11 +77,12 @@ const SLOT_STAGGER_SECONDS = 0.03;
 
 // The sprung numbers of each part, as the resolver names them: lengths on
 // the length spring, and surface numbers on the colour spring. A layer's
-// inclusion weights, an array, are not sprung: retargetParts() copies
-// them in. A layer's wonky numbers are surface numbers too: its `rise`,
-// its `soft` as 0 or 1, and its direction as `wonkyCosine` and
-// `wonkySine`, as surfaceOfLayer() derives them, so they ease between
-// cakes and a layer appearing from nothing takes them at once.
+// inclusion weights, an array, and its scorch seed, a whole number, are not
+// sprung: retargetParts() copies them in, so a seed never passes through
+// the whole numbers between two cakes'. A layer's wonky numbers are surface
+// numbers too: its `rise`, its `soft` as 0 or 1, and its direction as
+// `wonkyCosine` and `wonkySine`, as surfaceOfLayer() derives them, so they
+// ease between cakes and a layer appearing from nothing takes them at once.
 const COLOR_CHANNELS = ["r", "g", "b"];
 const LAYER_LENGTH_KEYS = [
   "bottomRadiusMeters",
@@ -103,7 +104,6 @@ const LAYER_SURFACE_KEYS = [
   "scorchClustering",
   "scorchCoverage",
   "scorchScale",
-  "scorchSeed",
   "scorchVariety",
   "soft",
   "translucency",
@@ -383,9 +383,11 @@ const retargetParts = (motion, cake) => {
       target.heightMeters > 0,
       part.lengths.heightMeters.value < SETTLE_METERS,
     );
-    // The weights only pick each inclusion's kind, so they switch at once,
-    // and a vanishing layer keeps its own, as it keeps its colour.
+    // The weights only pick each inclusion's kind, and the seed only picks
+    // a scorch pattern, so both switch at once, and a vanishing layer keeps
+    // its own, as it keeps its colour.
     if (target.heightMeters > 0) {
+      part.values.scorchSeed = target.scorchSeed;
       const weights = part.values.inclusionWeights;
       for (let index = 0; index < weights.length; index++) {
         weights[index] = target.inclusionWeights[index];
