@@ -40,8 +40,11 @@ import { toppingChunk } from "./topping.js";
  *   the layers without their holes, the candles without their flames and
  *   the decorations without their slab's shortcut.
  * - The cake's `wonky` shapes its layers, as src/sdf/layers.js sets out,
- *   lays the topping over the wonky top, and tears the eaten slice's cut
- *   by eatenTearAt(); the plate stays round and the decorations keep p.
+ *   lays the topping over the wonky top, and tears the eaten cut by
+ *   eatenTearAt(); the plate stays round and the decorations keep p.
+ * - The eaten cut is a wedge about +X, or, as the cake's `biteShare` goes
+ *   from 0 to 1, a squashed elliptical bite out of the rim there, which
+ *   biteDistance() gives; a share between the two mixes their cuts.
  */
 export const cakeChunk = /* glsl */ `
   ${crumbChunk}
@@ -49,6 +52,7 @@ export const cakeChunk = /* glsl */ `
   ${layersChunk}
   ${toppingChunk}
 
+  uniform float biteShare;
   uniform float eatenAngleRadians;
   // The two cylinders on the Y axis that bound the cake, the plate's and
   // the stack's, from bottom to top, in metres. A cylinder of zero radius
@@ -62,6 +66,11 @@ export const cakeChunk = /* glsl */ `
 
   ${decorationsChunk}
 
+  // The bite's least half width, in metres, so a zero rim radius, which
+  // the plate alone and a page with no cake give, never divides by zero.
+  const float BITE_FLOOR_METERS = 0.0001;
+  // The bite's half width along x over its half width along z, unitless.
+  const float BITE_SQUASH = 0.6;
   const float DECORATION_METALNESS = 0.0; // no decoration is a metal
   // What cakeFieldOf() hides: nothing, or the topping alone. A slot, 0 to
   // LAYER_SLOTS - 1, hides that layer and the topping. HIDE_DECORATION_FIRST
@@ -181,22 +190,41 @@ export const cakeChunk = /* glsl */ `
       sin(WONKY_TEAR_RADIANS_PER_METER * length(p.xz));
   }
 
-  // The stack's distance with the eaten slice cut from it. Up to half a
-  // turn the cut is a wedge about +X. Past it, the stack is intersected,
-  // by iq's opIntersection, a bound, with the complementary wedge about
-  // -X, which wedgeDistance() gives with p.x negated; both forms agree at
-  // half a turn. The tear, eatenTearAt(), is added to the cut's term in
-  // both forms, so they still agree there and the torn faces never jump.
-  // An angle of 0 cuts nothing and is skipped, as its wedge would be the
-  // half-plane z = 0 on the +X side, which bends the normals along it.
+  // The bite's distance at xz, in metres, negative inside: an ellipse
+  // about the Y axis centred on the rim at (r0, 0), with half width a =
+  // r0 x angle / PI along z, so it grows with the eaten angle as the wedge
+  // does, and b = BITE_SQUASH x a along x. It is iq's ellipse by domain
+  // scaling, https://iquilezles.org/articles/distfunctions2d/: the circle's
+  // distance in the scaled domain times the scale. That scale is not
+  // uniform, but b is the lesser of the two, so the gradient never passes
+  // 1, the distance only underestimates, and no step factor is needed.
+  float biteDistance(vec2 xz) {
+    float a = max(wonkyRadiusMeters * eatenAngleRadians / PI,
+      BITE_FLOOR_METERS);
+    float b = BITE_SQUASH * a;
+    return (length((xz - vec2(wonkyRadiusMeters, 0.0)) / vec2(b, a)) - 1.0) *
+      b;
+  }
+
+  // The stack's distance with the eaten cut taken from it. The cut's
+  // distance is negative inside it. Up to half a turn the wedge's is a
+  // wedge about +X. Past it, it is the complementary wedge about -X, which
+  // wedgeDistance() gives with p.x negated, negated, so the stack is
+  // intersected with it, as iq's opIntersection, a bound; both forms agree
+  // at half a turn. biteShare mixes that with biteDistance(), a convex mix
+  // of two fields that never overestimate, so a walk between a sliced and a
+  // bitten cake morphs the cut. The tear, eatenTearAt(), is subtracted from
+  // the mix once, so the torn faces never jump. An angle of 0 cuts nothing
+  // and is skipped, as its wedge would be the half-plane z = 0 on the +X
+  // side, which bends the normals along it.
   float eatenStackDistance(vec3 p, float stack) {
     if (eatenAngleRadians <= 0.0) return stack;
     float halfAngle = 0.5 * eatenAngleRadians;
-    float tear = eatenTearAt(p);
-    if (halfAngle <= PI_HALF) {
-      return subtractDistance(wedgeDistance(p.xz, halfAngle) - tear, stack);
-    }
-    return max(wedgeDistance(vec2(-p.x, p.z), PI - halfAngle) + tear, stack);
+    float wedgeCut = halfAngle <= PI_HALF
+      ? wedgeDistance(p.xz, halfAngle)
+      : -wedgeDistance(vec2(-p.x, p.z), PI - halfAngle);
+    float cut = mix(wedgeCut, biteDistance(p.xz), biteShare) - eatenTearAt(p);
+    return subtractDistance(cut, stack);
   }
 
   // The field at p: x is the distance to the cake in metres, negative
@@ -364,6 +392,7 @@ export const cakeChunk = /* glsl */ `
  * @returns The uniforms, keyed by the names the chunks declare.
  */
 export const createCakeUniforms = () => ({
+  biteShare: { value: 0 },
   decorationColors: {
     value: Array.from({ length: DECORATION_SLOTS }, () => new Color()),
   },
@@ -456,9 +485,10 @@ export const createCakeUniforms = () => ({
  *   in src/cake/wonky.js, so it springs with them.
  * - Clamps, since an underdamped spring can pass through 0: every length
  *   at 0 and below, so a layer's bottom never sinks into the plate, the
- *   coverage, the wonkiness and each layer's softness within 0 and 1, each
- *   layer's hole strength and translucency within 0 and 1, and each
- *   layer's rounding at the least of its radii and half its height.
+ *   coverage, the wonkiness, the bite's share and each layer's softness
+ *   within 0 and 1, each layer's hole strength and translucency within 0
+ *   and 1, and each layer's rounding at the least of its radii and half
+ *   its height.
  * - Allocates nothing, so it is safe on the per-frame path.
  * @param uniforms The material's uniforms, as createCakeUniforms() made
  *   them and UniformsUtils.merge() copied them.
@@ -469,6 +499,7 @@ export const createCakeUniforms = () => ({
 export const writeCakeUniforms = (uniforms, values) => {
   const { bounds, decorations, layers, plate, topping } = values;
 
+  uniforms.biteShare.value = Math.min(Math.max(values.biteShare, 0), 1);
   uniforms.eatenAngleRadians.value = values.eatenAngleRadians;
   uniforms.wonky.value = Math.min(Math.max(values.wonky, 0), 1);
   for (let index = 0; index < 3; index++) {

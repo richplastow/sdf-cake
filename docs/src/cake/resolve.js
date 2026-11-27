@@ -89,6 +89,8 @@ export const EATEN_MAX_RADIANS = FULL_TURN_RADIANS - SLIVER_RADIANS;
  *   as src/cake/wonky.js draws them.
  * - A cake with no plate resolves to a plate of all zeros, coloured
  *   `#000000`.
+ * - The cake's `biteShare` is 1 where the recipe's `biteDontSlice` is
+ *   true, a bite in place of a slice, and 0 where it is false.
  * - The eaten angle is the least fraction of a full turn, in radians,
  *   clamped to `EATEN_MAX_RADIANS`.
  * - The bounds are two cylinders on the Y axis, `bounds.plate` and
@@ -112,7 +114,8 @@ export const EATEN_MAX_RADIANS = FULL_TURN_RADIANS - SLIVER_RADIANS;
  * - Colours stay sRGB `#rrggbb` strings, as the palette gives them.
  * @param recipe A recipe, as src/cake/recipes.js holds them.
  * @returns The resolved cake: `plate`, `layers`, `topping`,
- *   `eatenAngleRadians`, `bounds`, `wonky` and `wonkyPhasesRadians`.
+ *   `biteShare`, `eatenAngleRadians`, `bounds`, `wonky` and
+ *   `wonkyPhasesRadians`.
  */
 export const resolveRecipe = (recipe) => {
   const plate = resolvePlate(recipe.plate);
@@ -209,6 +212,7 @@ export const resolveRecipe = (recipe) => {
     plate,
     layers,
     topping,
+    biteShare: recipe.biteDontSlice ? 1 : 0,
     eatenAngleRadians: eatenRadiansForFraction(recipe.eaten.minFraction),
     bounds,
     wonky: recipe.wonky,
@@ -240,6 +244,7 @@ export const eatenRadiansForFraction = (fraction) =>
  *   on, any layer's either radius less its rounding, is at most
  *   `MAX_DRIP_TERM`.
  * - `wonky` lies within 0 and 1.
+ * - `biteDontSlice` is a boolean.
  * - `eaten.steps` is at least 1; `eaten.minFraction` is at most
  *   `eaten.maxFraction`, both within 0 and 1, and the two are equal when
  *   there is one step.
@@ -347,6 +352,10 @@ export const validateRecipe = (recipe) => {
 
   if (!isFraction(recipe.wonky)) {
     problems.push("Its wonky lies outside 0 to 1.");
+  }
+
+  if (typeof recipe.biteDontSlice !== "boolean") {
+    problems.push("Its biteDontSlice is not a boolean.");
   }
 
   if (!(eaten.steps >= 1)) {

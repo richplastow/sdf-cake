@@ -25,7 +25,7 @@ type: plan
   [the research](../todo/01-presentation-mode-research.md#the-march-today-and-the-fields-the-brief-needs):
   a displacement breaks the bound by about its amplitude times its
   frequency.
-- Feeds [Plan 18](../todo/18-bite-dont-slice.md), whose bite is torn by the same
+- Feeds [Plan 18](./18-bite-dont-slice.md), whose bite is torn by the same
   term as the slice; depends on no plan after it.
 - Every term follows Inigo Quilez's
   [distance functions](https://iquilezles.org/articles/distfunctions/),

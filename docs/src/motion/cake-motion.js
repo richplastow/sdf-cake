@@ -151,8 +151,8 @@ const SHOWER_SINKING = -1;
  * - `values` has the resolved cake's shape, with each colour as sRGB
  *   channels `r`, `g` and `b`, from 0 to 1, and the topping's footing and
  *   the bounds derived from the layers, which at rest equal the
- *   resolver's. Its `wonky` and `wonkyPhasesRadians` spring on the colour
- *   spring, and each layer's `soft`, 0 to 1, `wonkyCosine` and
+ *   resolver's. Its `biteShare`, `wonky` and `wonkyPhasesRadians` spring
+ *   on the colour spring, and each layer's `soft`, 0 to 1, `wonkyCosine` and
  *   `wonkySine` with its `rise`; its `wonkyAngleRadians` stays as first
  *   resolved and is not read.
  * - `values.decorations` holds `DECORATION_SLOTS` items and the scatter,
@@ -193,10 +193,12 @@ export const createCakeMotion = (cake) => {
       plate: { ...cake.bounds.plate },
       stack: { ...cake.bounds.stack },
     },
+    biteShare: cake.biteShare,
     wonky: cake.wonky,
     wonkyPhasesRadians: [...cake.wonkyPhasesRadians],
   };
   const motion = {
+    biteShare: createSpring(cake.biteShare),
     bottoms: cake.layers.map((layer) => createSpring(layer.bottomMeters)),
     coverage: createSpring(cake.topping.coverage),
     // Seconds since the last cake change, and the decorations and the body
@@ -407,6 +409,7 @@ const retargetParts = (motion, cake) => {
     motion.coverage.value < SETTLE_COVERAGE,
   );
   motion.coverage.target = cake.topping.coverage;
+  motion.biteShare.target = cake.biteShare;
   motion.wonky.target = cake.wonky;
   for (let index = 0; index < motion.wonkyPhases.length; index++) {
     motion.wonkyPhases[index].target = cake.wonkyPhasesRadians[index];
@@ -470,6 +473,8 @@ export const stepCakeMotion = (motion, deltaSeconds) => {
   stepPart(motion.topping, dt);
   stepLengthSpring(motion.coverage, dt);
   values.topping.coverage = motion.coverage.value;
+  stepSpring(motion.biteShare, COLOR_SPRING, dt);
+  values.biteShare = motion.biteShare.value;
   stepSpring(motion.wonky, COLOR_SPRING, dt);
   values.wonky = motion.wonky.value;
   for (let index = 0; index < motion.wonkyPhases.length; index++) {
@@ -811,6 +816,7 @@ const snapCakeMotion = (motion) => {
   snapPart(motion.plate);
   snapPart(motion.topping);
   snapSpring(motion.coverage);
+  snapSpring(motion.biteShare);
   snapSpring(motion.wonky);
   for (const phase of motion.wonkyPhases) snapSpring(phase);
 

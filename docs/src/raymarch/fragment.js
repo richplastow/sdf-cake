@@ -335,6 +335,18 @@ export const raymarchFragmentShader = /* glsl */ `
     );
   }
 
+  // The eaten cut as a term to take the max() of with a layer's distance,
+  // positive inside the cut, torn as eatenTearAt() tears it: the half-space
+  // beyond the slice's face on p's side, or, as biteShare goes
+  // from 0 to 1, the bite's oval, which biteDistance() gives, so a bitten
+  // cake's holes are occluded wherever its crumb remains. With nothing
+  // eaten, the face's offset puts the bite too far off to cut anything.
+  float eatenFaceTermAt(vec3 q, vec2 faceNormal, float faceOffset) {
+    float face = dot(q.xz, faceNormal) + faceOffset;
+    float bite = eatenAngleRadians > 0.0 ? -biteDistance(q.xz) : faceOffset;
+    return mix(face, bite, biteShare) + eatenTearAt(q);
+  }
+
   // The ambient occlusion of a holed layer's cavities at p, 0 fully
   // occluded to 1 open, from AO_SAMPLES reads along its unit normal,
   // AO_STEP_METERS apart: each read's shortfall from its own distance
@@ -372,7 +384,7 @@ export const raymarchFragmentShader = /* glsl */ `
     float faceOffset = eatenAngleRadians > 0.0 ? 0.0 : -NO_SURFACE_METERS;
     float depth = -max(
       layerPlainDistance(p, layerFrameAt(p, slot), slot),
-      dot(p.xz, faceNormal) + faceOffset + eatenTearAt(p)
+      eatenFaceTermAt(p, faceNormal, faceOffset)
     );
     if (depth <= 0.0) return 1.0;
     float shortfall = 0.0;
@@ -382,7 +394,7 @@ export const raymarchFragmentShader = /* glsl */ `
       vec3 s = p + normal * along;
       float d = max(
         layerDistance(s, layerFrameAt(s, slot), slot, false),
-        dot(s.xz, faceNormal) + faceOffset + eatenTearAt(s)
+        eatenFaceTermAt(s, faceNormal, faceOffset)
       );
       shortfall += weight * (along - d) / AO_STEP_METERS;
       weight *= 0.5;
