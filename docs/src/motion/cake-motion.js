@@ -791,8 +791,10 @@ const snapSpring = (spring) => {
 /** #### Starts every present decoration sinking from where it is
  * - Each slot starts `SLOT_STAGGER_SECONDS` after the last present one, but
  *   a candle starts at its cue, its share of `FLAME_SCATTER_SECONDS`; the
- *   scatter starts last of all, from its rest. An item still waiting to
- *   drop is emptied.
+ *   scatter starts last of all, from its rest, or carries on a sink
+ *   already under way. An item still waiting to drop is emptied.
+ * - Delays count from the change, so the caller zeroes `changeSeconds`
+ *   first.
  * - Allocates nothing.
  */
 const sinkDecorations = (decorations) => {
@@ -810,6 +812,12 @@ const sinkDecorations = (decorations) => {
     }
   }
   const { scatter } = decorations;
+  // A shower already sinking keeps its clock, re-timed to this change,
+  // since restarting it would raise its sunk items back to rest.
+  if (scatter.phase === ITEM_SINKING) {
+    scatter.delaySeconds = -SINK_SECONDS * scatter.showerClock;
+    return;
+  }
   sinkItem(
     scatter,
     Math.max(

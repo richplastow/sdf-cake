@@ -14,8 +14,8 @@ type: plan
   and sinks into the cake at one instant (read in stepItem() in
   `docs/src/motion/cake-motion.js` and scatterNearest() in
   `docs/src/sdf/decorations.js`, 2026-11-26).
-- Builds on [Plan 06](../done/06-decorations.md), which drew the
-  scatter, and [Plan 05](../done/05-transitions.md), which choreographed
+- Builds on [Plan 06](./06-decorations.md), which drew the
+  scatter, and [Plan 05](./05-transitions.md), which choreographed
   the drops; feeds nothing, and depends on no plan after it.
 
 ## Decisions
@@ -92,6 +92,9 @@ type: plan
   (Agent QA).
 - It should stand the scatter at rest at once under reduced motion, its
   phase 0 (Agent QA).
+- It should carry on a sink already under way when another cake change
+  comes, keeping its clock, rather than raise its sunk items back to rest
+  (Agent QA).
 
 **Agent QA**
 
@@ -104,6 +107,10 @@ type: plan
   under way, timed in `SINK_SECONDS` over the sink's spread; at 1.95 s
   the last cell's fall is, timed in `DROP_SECONDS`; under reduced
   motion the scatter rests at once at its rest scale.
+- Do: `node --input-type=module -e 'import { RECIPES } from "./docs/src/cake/recipes.js"; import { resolveRecipe } from "./docs/src/cake/resolve.js"; import { placeDecorations, placeScatter } from "./docs/src/cake/place.js"; import { createCakeMotion, retargetCakeMotion, stepCakeMotion } from "./docs/src/motion/cake-motion.js"; const r = RECIPES.find((x) => x.id === "pepionkh-honey-cake"); const cake = () => ({ ...resolveRecipe(r), decorations: { scatter: placeScatter(r), slots: placeDecorations(r) } }); const m = createCakeMotion(cake()); retargetCakeMotion(m, cake(), { reducedMotion: false }); for (let i = 0; i < 10; i++) stepCakeMotion(m, 0.05); const d = m.values.decorations.scatter; const a = [d.showerPhase, d.showerClock.toFixed(2)].join(" "); retargetCakeMotion(m, cake(), { reducedMotion: false }); stepCakeMotion(m, 0.05); console.log(a, "|", d.showerPhase, d.showerClock.toFixed(2));'`
+- Expect: `-1 1.25 | -1 1.37`: a second change 0.5 s into the sink, and
+  one more frame, carries the shower's clock on by 0.05 s, 0.125 of
+  `SINK_SECONDS`; a restarted sink would print `-1 0.13`.
 - Do: `grep -c scatterOffsetMeters docs/src/sdf/cake.js`, then
   `grep -c scatterShower docs/src/sdf/cake.js`
 - Expect: `0`, then `2` or more.
@@ -170,8 +177,8 @@ warning or shader log in the console.
      shower before the cake changes, and the new cake's shower in about
      a second after it.
 6. **Do:** At `#pepionkh-honey-cake` with the seeds landed, press Down
-   once and wait for them to sink. Press Up once, then press Down within
-   half a second, while the seeds are still falling.
+   once and wait for them to sink. Press Up once, then press Down about
+   half a second later, while the seeds are still falling.
    - **Expect:** The accepted glitch: at the second Down, the seeds still
      in the air jump straight down onto the cake in one frame, those near
      the top by up to 120 mm, and those not yet fallen appear on the cake
@@ -225,3 +232,27 @@ warning or shader log in the console.
   parse, no long lines, `/` and the 3 changed files served 200 by a
   server started and stopped for the check, vendored checksums match;
   browser not run.
+- **2026-11-27T00:05:46Z** — **quality-checked**: Fixed: a second cake
+  change during the scatter's sink (Right twice within 0.7 s) restarted
+  the shower from rest, raising sunk seeds back to full size (clock 1.25
+  back to 0.13); sinkDecorations() in `docs/src/motion/cake-motion.js`
+  now carries a sink under way on its clock, re-timed to the change,
+  with a Step 1 criterion and Agent QA line (fails before, passes
+  after). Manual QA 6's Down moved from "within half a second" to "about
+  half a second later", since a Down in the first 0.15 s
+  (`REVEAL_DROP_DELAY_SECONDS`) empties the waiting scatter and shows no
+  glitch. Deferred: none. Verified fine: per-frame path (stepShower()
+  writes fields only; `scatterShower` preallocated, packed in place);
+  no resources created or removed, no resize or input code touched;
+  Float32Array(4) for a vec4 matches r187's setValueV4f()
+  (`uniform4fv`); shader keeps the colour draw (`cue` drawn without
+  advancing `hash`); the cue-1 offset bounds every cell; the scatter's
+  shrink keeps its embed proportional to scale, as before this plan,
+  where a slot's embed is fixed metres, a difference hidden below the
+  topping; Decision 2's glitch figures (0.12 m drop height, 0.6 + 0.45
+  s) match the code; agent checks 1 to 4 pass, using the server on 2222
+  found running (pid 59066, started 00:04:30Z); browser not run.
+- **2026-11-27T00:07:31Z** — **done**: the Lead Developer’s manual QA
+  passed, through an unattended `/orchestrate-plan` run (review,
+  implementation, one quality-check round; the sweep stopped early on the
+  Lead Developer’s word).
