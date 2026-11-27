@@ -8,6 +8,15 @@
 import { MATERIALS } from "./materials.js";
 import { greatestDecorationHeightMeters, kindNamed } from "./place.js";
 import { DECORATION_SLOTS, LAYER_SLOTS } from "./slots.js";
+import {
+  LAYER_BLEND_FADE_METERS,
+  WONKY_LUMP_METERS,
+  WONKY_OUTLINE,
+  WONKY_RISE_METERS,
+  WONKY_SHIFT_METERS,
+  wonkyLayerOf,
+  wonkyPhasesOf,
+} from "./wonky.js";
 
 // The margin by which each bounding cylinder passes its part's extent, in
 // radius and at both ends: 2 mm, which covers the march's own slop and
@@ -71,6 +80,13 @@ export const EATEN_MAX_RADIANS = FULL_TURN_RADIANS - SLIVER_RADIANS;
  *   `scorchScale`, defaulting to 1, `scorchSeed`, a whole number
  *   that picks another pattern, defaulting to 0, and `scorchVariety`, 0 to 1,
  *   defaulting to 0.
+ * - Each layer's `rise`, -1 sags to 1 domes, and `soft`, true for a soft
+ *   filling, are its material's, defaulting to 0 and false, and its
+ *   `wonkyAngleRadians`, its dome's and soft shift's direction, comes from
+ *   the cake's hash and its slot; an unused slot's are 0, false and 0.
+ * - The cake's `wonky`, 0 to 1, is the recipe's, and its
+ *   `wonkyPhasesRadians`, its outline's three phases, come from its hash,
+ *   as src/cake/wonky.js draws them.
  * - A cake with no plate resolves to a plate of all zeros, coloured
  *   `#000000`.
  * - The eaten angle is the least fraction of a full turn, in radians,
@@ -90,20 +106,20 @@ export const EATEN_MAX_RADIANS = FULL_TURN_RADIANS - SLIVER_RADIANS;
  *   round, and by the topping's thickness, and the most its smoothing can
  *   push the coat further out, in radius, and by the same plus its pile
  *   and its tallest decoration at the top, as writeCakeBounds() works
- *   them out.
+ *   them out, and by its wonkiness's reach, in radius and at the top.
  * - The topping's `translucency`, 0 to 1, defaults to 0, opaque, and its
  *   `invisible` is 1 where the recipe's `isInvisible` hides it, else 0.
  * - Colours stay sRGB `#rrggbb` strings, as the palette gives them.
  * @param recipe A recipe, as src/cake/recipes.js holds them.
  * @returns The resolved cake: `plate`, `layers`, `topping`,
- *   `eatenAngleRadians` and `bounds`.
+ *   `eatenAngleRadians`, `bounds`, `wonky` and `wonkyPhasesRadians`.
  */
 export const resolveRecipe = (recipe) => {
   const plate = resolvePlate(recipe.plate);
 
   const layers = [];
   let stackTopMeters = 0;
-  for (const layer of recipe.layers) {
+  recipe.layers.forEach((layer, slot) => {
     const material = MATERIALS[layer.material];
     const counts = INCLUSION_COUNT_KEYS.map((key) => layer.inclusions[key]);
     const total = counts.reduce((sum, count) => sum + count, 0);
@@ -131,9 +147,10 @@ export const resolveRecipe = (recipe) => {
       inclusionWeights: counts.map((count) => (total > 0 ? count / total : 0)),
       irregularityMeters: layer.irregularityMeters,
       translucency: material.translucency ?? 0,
+      ...wonkyLayerOf(recipe, layer, slot),
     });
     stackTopMeters += layer.heightMeters;
-  }
+  });
   while (layers.length < LAYER_SLOTS) {
     layers.push({
       bottomMeters: stackTopMeters,
@@ -158,6 +175,9 @@ export const resolveRecipe = (recipe) => {
       inclusionWeights: [0, 0, 0],
       irregularityMeters: 0,
       translucency: 0,
+      rise: 0,
+      soft: false,
+      wonkyAngleRadians: 0,
     });
   }
 
@@ -182,6 +202,7 @@ export const resolveRecipe = (recipe) => {
     layers,
     plate,
     topping,
+    recipe.wonky,
   );
 
   return {
@@ -190,6 +211,8 @@ export const resolveRecipe = (recipe) => {
     topping,
     eatenAngleRadians: eatenRadiansForFraction(recipe.eaten.minFraction),
     bounds,
+    wonky: recipe.wonky,
+    wonkyPhasesRadians: wonkyPhasesOf(recipe),
   };
 };
 
@@ -216,6 +239,7 @@ export const eatenRadiansForFraction = (fraction) =>
  *   its `dripMeters` times its waves over the least radius a drip can end
  *   on, any layer's either radius less its rounding, is at most
  *   `MAX_DRIP_TERM`.
+ * - `wonky` lies within 0 and 1.
  * - `eaten.steps` is at least 1; `eaten.minFraction` is at most
  *   `eaten.maxFraction`, both within 0 and 1, and the two are equal when
  *   there is one step.
@@ -321,6 +345,10 @@ export const validateRecipe = (recipe) => {
     }
   }
 
+  if (!isFraction(recipe.wonky)) {
+    problems.push("Its wonky lies outside 0 to 1.");
+  }
+
   if (!(eaten.steps >= 1)) {
     problems.push("It is eaten in fewer than 1 step.");
   }
@@ -364,6 +392,11 @@ export const dripTermOf = (dripMeters, dripWaves, radiusMeters) =>
  *   thickness and the most its smoothing can push the coat further out,
  *   in radius, and by the same, its pile and its tallest decoration at
  *   the top.
+ * - The stack's radius grows by the wonky outline's reach, `wonky ×
+ *   WONKY_OUTLINE` of the widest radius, and the soft layers' shift,
+ *   `wonky × WONKY_SHIFT_METERS`; its top by the most each used slot's
+ *   top can rise, `wonky × (WONKY_RISE_METERS + WONKY_LUMP_METERS)`, times
+ *   the used slots.
  * - A stack with no layer taller than 0 has no bound, whatever its
  *   topping, so it gets the same cylinder as a missing plate.
  * - Each grows by `BOUND_MARGIN_METERS`; a part a cake lacks has a
@@ -380,6 +413,7 @@ export const dripTermOf = (dripMeters, dripWaves, radiusMeters) =>
  *   `irregularityMeters`.
  * @param plate The cake's plate, its lengths in metres.
  * @param topping The cake's topping, its lengths in metres.
+ * @param wonky The cake's wonkiness, 0 to 1; read as 0 below 0.
  * @returns The bounds.
  */
 export const writeCakeBounds = (
@@ -388,6 +422,7 @@ export const writeCakeBounds = (
   layers,
   plate,
   topping,
+  wonky,
 ) => {
   // The plate's stroked profile reaches half its thickness past the rim,
   // down to its underside, one thickness below the origin, and up to the
@@ -406,9 +441,15 @@ export const writeCakeBounds = (
   let stackTopMeters = -Infinity;
   let widestRadiusMeters = 0;
   let irregularityMeters = 0;
+  // Each slot counts towards the wonky top's growth faded in by its
+  // height over LAYER_BLEND_FADE_METERS, as the shader fades its offset,
+  // never as a whole slot: a hidden slot's height rings about 0 on its
+  // spring, and a whole count would flip the bound with every crossing.
+  let usedSlotShare = 0;
   for (let slot = 0; slot < layers.length; slot++) {
     const layer = layers[slot];
     if (layer.heightMeters <= 0) continue;
+    usedSlotShare += Math.min(layer.heightMeters / LAYER_BLEND_FADE_METERS, 1);
     irregularityMeters = Math.max(
       irregularityMeters,
       layer.irregularityMeters,
@@ -431,6 +472,14 @@ export const writeCakeBounds = (
   const toppingThicknessMeters = Math.max(topping.thicknessMeters, 0);
   const bulgedThicknessMeters =
     (1 + SKIRT_BULGE_PER_THICKNESS) * toppingThicknessMeters;
+  // The wonky outline and soft shift reach out, and each used slot's top
+  // offset, faded in, can lift the top, as src/sdf/layers.js's bound
+  // grows them.
+  const wonkiness = Math.max(wonky, 0);
+  const wonkyRadiusMeters =
+    wonkiness * (WONKY_OUTLINE * widestRadiusMeters + WONKY_SHIFT_METERS);
+  const wonkyTopMeters =
+    wonkiness * (WONKY_RISE_METERS + WONKY_LUMP_METERS) * usedSlotShare;
   // A displaced layer reaches up to its irregularity beyond its cone. With
   // no layer taller than 0, the topping has nothing to coat, so the stack
   // takes a radius of 0 and the all-zero cylinder, never an infinite span.
@@ -439,9 +488,13 @@ export const writeCakeBounds = (
     stackBottomMeters - irregularityMeters,
     stackBottomMeters === Infinity
       ? 0
-      : widestRadiusMeters + irregularityMeters + bulgedThicknessMeters,
+      : widestRadiusMeters +
+          irregularityMeters +
+          bulgedThicknessMeters +
+          wonkyRadiusMeters,
     stackTopMeters +
       irregularityMeters +
+      wonkyTopMeters +
       bulgedThicknessMeters +
       Math.max(topping.pileMeters, 0) +
       Math.max(decorationHeightMeters, 0),

@@ -12,7 +12,7 @@ type: plan
   every other cake.
 - Builds on [Plan 07](../done/07-sliders.md), the eaten wedge in
   eatenStackDistance() in `docs/src/sdf/cake.js`, and on
-  [Plan 17](17-wonky-cakes.md), whose tear term roughens the wall; the
+  [Plan 17](../done/17-wonky-cakes.md), whose tear term roughens the wall; the
   research measured that
   [bites cost nothing extra and keep the bound](01-presentation-mode-research.md#the-march-today-and-the-fields-the-brief-needs).
 - A Bite Mode, where a click takes a bite anywhere, waits in the

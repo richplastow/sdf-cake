@@ -87,6 +87,7 @@ import {
 } from "./tour/guess.js";
 import {
   isLastGuessPage,
+  isLastPresentationPage,
   nextPageIndex,
   PAGES,
   pageIndexForHash,
@@ -532,13 +533,15 @@ const goRight = () => {
 };
 
 /** #### Gives the prompt to show now
- * - The guess flow's on a `guess` page; else a blocked move's hint; else
- *   `"end"` once autoplay's end prompt is due; else `null`, for none.
+ * - The guess flow's on a `guess` page; else a blocked move's hint; else,
+ *   once autoplay's end prompt is due, `"end-last"` on the last
+ *   presentation cake and `"end"` on any other; else `null`, for none.
  */
 const promptKindNow = () => {
   if (guess !== null) return promptOf(guess, revealStop, revealMax);
   if (hint !== null) return hint;
-  return autoplay !== null && isEndPromptDue(autoplay) ? "end" : null;
+  if (autoplay === null || !isEndPromptDue(autoplay)) return null;
+  return isLastPresentationPage(pageIndex, PAGES) ? "end-last" : "end";
 };
 
 /** #### Gives the action the Play/Pause button takes now

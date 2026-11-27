@@ -6,6 +6,8 @@
  * nothing here imports from `three`, so Node can run it.
  */
 
+import { stackTopOffsetAt, wonkyLayerOf } from "./wonky.js";
+
 // A cherry's translucency, 0 opaque to 1 clear, on the scale of the jam's
 // JAM_TRANSLUCENCY in src/cake/materials.js: a glacé cherry, mostly sugar
 // syrup, letting a little light through. A tuning value, not measured.
@@ -176,14 +178,22 @@ export const SPRINKLE_PALETTE = [
  * - The hash is seeded by the cake's `placementSeed`, or its id, the
  *   kind's name, the item's index and the try, so a cake always places
  *   the same way.
+ * - Each item takes the stack's wonky top offset at its point, by
+ *   stackTopOffsetAt() in src/cake/wonky.js, with the recipe's own
+ *   `wonky`, so it sits on the wonky top.
  * @param recipe A recipe, as src/cake/recipes.js holds them.
  * @returns The slots, each its `color`, `cueFraction` (0 up to 1, its share
  *   of a scatter in time), `embedMeters`, `footprintMeters`, `kindId`,
  *   `rotation` (nine numbers, column-major), `roughness`, `scale`,
- *   `xMeters` and `zMeters`.
+ *   `topOffsetMeters`, `xMeters` and `zMeters`.
  */
 export const placeDecorations = (recipe) => {
   const crownRadiusMeters = crownTopRadiusMeters(recipe.layers);
+  // The layers as stackTopOffsetAt() reads them, with their wonky numbers.
+  const wonkyLayers = recipe.layers.map((layer, slot) => ({
+    ...layer,
+    ...wonkyLayerOf(recipe, layer, slot),
+  }));
   const countable = recipe.decorations
     .map((decoration) => ({ decoration, kind: kindNamed(decoration.kind) }))
     .filter(({ kind }) => !kind.isScattered)
@@ -204,6 +214,13 @@ export const placeDecorations = (recipe) => {
           recipe.placementSeed ?? recipe.id,
           slots,
         ),
+      );
+      const item = slots[slots.length - 1];
+      item.topOffsetMeters = stackTopOffsetAt(
+        wonkyLayers,
+        recipe.wonky,
+        item.xMeters,
+        item.zMeters,
       );
     }
   }
@@ -279,6 +296,28 @@ export const boundingRadiusMeters = (kind) => {
   return 0.5 * Math.max(x, y, z) + crownOf(kind);
 };
 
+/** #### Hashes a text to a 32-bit unsigned integer
+ * - FNV-1a, http://www.isthe.com/chongo/tech/comp/fnv/, then lowbias32
+ *   to spread its bits.
+ * @param text Any text, such as a recipe's id and a salt.
+ * @returns The hash, a whole number from 0 up to 2^32.
+ */
+export const hashText = (text) => {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < text.length; index++) {
+    hash = Math.imul(hash ^ text.charCodeAt(index), 0x01000193);
+  }
+  return lowbias32(hash);
+};
+
+/** #### Gives a number from 0 up to 1 from a seed and a salt, by lowbias32
+ * @param seed A hash, as hashText() gives it.
+ * @param salt A whole number that draws another number from the seed.
+ * @returns The number, from 0 up to 1.
+ */
+export const unitOf = (seed, salt) =>
+  lowbias32(seed + Math.imul(salt + 1, 0x9e3779b9)) / 0x100000000;
+
 /** Gives how far a kind's wick and flame stand above its body, in metres. */
 const crownOf = (kind) => kind.crownMeters ?? 0;
 
@@ -306,18 +345,6 @@ const footprintOf = (kind, scale) =>
   scale *
   (horizontalReachMeters(kind) +
     0.5 * kind.sizeMeters[1] * Math.sin(kind.tiltRadians));
-
-/** #### Hashes a text to a 32-bit unsigned integer
- * - FNV-1a, http://www.isthe.com/chongo/tech/comp/fnv/, then lowbias32
- *   to spread its bits.
- */
-const hashText = (text) => {
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < text.length; index++) {
-    hash = Math.imul(hash ^ text.charCodeAt(index), 0x01000193);
-  }
-  return lowbias32(hash);
-};
 
 /** Gives a kind's widest horizontal reach from its centre at scale 1. */
 const horizontalReachMeters = (kind) => {
@@ -446,7 +473,3 @@ const rotationOf = (tiltXRadians, tiltZRadians, yawRadians) => {
   ]);
   return [0, 1, 2].flatMap((column) => rows.map((row) => row[column]));
 };
-
-/** Gives a number from 0 up to 1 from a seed and a salt, by lowbias32. */
-const unitOf = (seed, salt) =>
-  lowbias32(seed + Math.imul(salt + 1, 0x9e3779b9)) / 0x100000000;

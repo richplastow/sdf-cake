@@ -33,6 +33,10 @@ const CANDLE_RING = Array.from({ length: CANDLE_RING_COUNT }, (_, i) => {
  *   elsewhere, such as sprinkles.
  * - `eaten.minFraction` and `eaten.maxFraction` are fractions of a full
  *   turn.
+ * - `wonky`, 0 to 1, required, is how far the cake departs from a perfect
+ *   one: its outline off round, its layers' tops domed or sagged and
+ *   lumpy, its soft layers set off and oozing, and its slice torn, as
+ *   src/cake/wonky.js shapes them. Its base always stays flat.
  * - A decoration of count 1 may give `at`, its `xMeters` and `zMeters`
  *   on the top, to sit there rather than where placeDecorations() puts
  *   it, and optionally `tiltZRadians`, its tilt about Z, and
@@ -51,6 +55,7 @@ const CANDLE_RING = Array.from({ length: CANDLE_RING_COUNT }, (_, i) => {
 export const RECIPES = [
   {
     id: "1",
+    wonky: 0.1,
     // Seeds the placement as its first id, "black-forest", did, so its
     // decorations stay where they were tuned.
     placementSeed: "black-forest",
@@ -126,6 +131,7 @@ export const RECIPES = [
   },
   {
     id: "2", // cheesecake
+    wonky: 0.2,
     plate: {
       material: "lightBluePaper",
       baseRadiusMeters: 0.1,
@@ -169,6 +175,7 @@ export const RECIPES = [
   },
   {
     id: "3", // victoria-sponge
+    wonky: 0.1,
     plate: {
       material: "china",
       baseRadiusMeters: 0.105,
@@ -229,6 +236,7 @@ export const RECIPES = [
   },
   {
     id: "4",
+    wonky: 0.15,
     // Seeds the placement as its first id, "chocolate-drip", did, so its
     // decorations stay where they were tuned.
     placementSeed: "chocolate-drip",
@@ -306,6 +314,7 @@ export const RECIPES = [
   },
   {
     id: "5",
+    wonky: 0.4,
     // Seeds the placement as its first id, "fruit-cake", did, so its
     // decorations stay where they were tuned.
     placementSeed: "fruit-cake",
@@ -347,6 +356,7 @@ export const RECIPES = [
   },
   {
     id: "pancake",
+    wonky: 0.7,
     // A simple pancake: one thin layer of batter, browned where it met the
     // pan, on a rustic slab of grey stone: flat and thick, with no sweep or
     // lip, its edge rounded by the profile's stroke. No topping or
@@ -376,6 +386,7 @@ export const RECIPES = [
   },
   {
     id: "pepionkh-honey-cake",
+    wonky: 0.3,
     // Two wheat flatbreads with honey between and sesame on top, after the
     // honey cake found in the tomb of the vizier Pepi’Onkh, about 4,200
     // years old. A flat brushed-copper dish, its lip rising straight up
@@ -436,6 +447,7 @@ export const RECIPES = [
   },
   {
     id: "artemis-offering",
+    wonky: 0.12,
     // An offering to Artemis, goddess of the moon: silvery white layers
     // ringed with candles, on a brushed-gold plate.
     plate: {
@@ -529,6 +541,7 @@ export const RECIPES = [
   },
   {
     id: "sachertorte",
+    wonky: 0.1,
     // A Sachertorte: two dense chocolate sponges with apricot jam between,
     // and a thin coat of it beneath a glossy dark chocolate glaze that runs
     // all the way down the sides.
@@ -609,6 +622,7 @@ export const RECIPES = [
   },
   {
     id: "bolo-formigueiro",
+    wonky: 0.35,
     // A Bolo Formigueiro, the Brazilian ‘anthill’ cake, in a round tin: one
     // golden sponge whose holes are all filled with chocolate, under a
     // dripping chocolate glaze and chocolate sprinkles, on a plate the
@@ -651,6 +665,7 @@ export const RECIPES = [
   },
   {
     id: "banh-bo",
+    wonky: 0.2,
     // A Vietnamese cow cake, bánh bò: two green pandan sponges, browned
     // where they baked against the tin, with cream between, on a thick,
     // shallow wooden plate. No topping or decorations.
@@ -697,6 +712,7 @@ export const RECIPES = [
   },
   {
     id: "custard-pie",
+    wonky: 0.45,
     plate: {
       material: "paper",
       baseRadiusMeters: 0.11,

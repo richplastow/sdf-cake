@@ -28,7 +28,11 @@ import { toGlslFloat } from "./decorations.js";
  *   coat, the coat thick in each channel, and the topping only a little
  *   way into the outermost and topmost holes, never filling every one.
  * - toppingField() returns the distance in metres, negative inside the
- *   topping, and its material id, `MATERIAL_TOPPING`.
+ *   topping, and its material id, `MATERIAL_TOPPING`. It takes q outlined
+ *   and lowered by the wonky stack's top offset at the sample, as
+ *   cakeFieldOf() in src/sdf/cake.js works them out, so its cap, floor,
+ *   pile, drips' cut-off and carve ride the wonky top, as its skirt rides
+ *   the smoothed wonky stack.
  * - toppingSurfaceHeight() returns the height of the topping's top at a
  *   radius, in metres, for the decorations: exact over the cap's flat and
  *   the pile.
@@ -185,8 +189,9 @@ export const toppingChunk = /* glsl */ `
 
   // The field of the topping: x is the distance in metres, negative inside
   // it, and y its material id. It takes the point, p, the point in the
-  // plane of revolution, q, and the uncut stack's smoothed distance, in
-  // metres, the layers joined by toppingSkirtBlend().
+  // plane of revolution, q, outlined and lowered by the stack's top
+  // offset, the uncut stack's smoothed distance, in metres, the layers
+  // joined by toppingSkirtBlend(), and that top offset, in metres.
   //
   // The skirt is the smoothed stack offset outwards by the thickness, iq's
   // opRound, cut off below a height by iq's opIntersection with a
@@ -197,7 +202,14 @@ export const toppingChunk = /* glsl */ `
   // standing on the base, unioned with the cap. The cap's floor lies
   // CARVE_DIP_METERS below the base, so it reaches into the top layer's
   // holes. toppingCarveDistance() is subtracted last.
-  vec2 toppingField(vec3 p, vec2 q, float smoothStack) {
+  //
+  // The drips' cut-off rides the wonky top in proportion to its height
+  // over the base, so it follows the top where the skirt has barely
+  // started, and still reaches the plate, which stays flat, where it runs
+  // all the way down. The top offset's slope then adds at most
+  // WONKY_TOP_GRADIENT per unit of wonky, which the march's step factor
+  // covers.
+  vec2 toppingField(vec3 p, vec2 q, float smoothStack, float topOffset) {
     if (toppingCoverage <= 0.0 || toppingInvisible > 0.5) {
       return vec2(NO_SURFACE_METERS, MATERIAL_TOPPING);
     }
@@ -259,7 +271,8 @@ export const toppingChunk = /* glsl */ `
       // overestimates the distance to its sloping face by up to
       // sqrt(1 + slope^2), so this term alone is scaled by the inverse, the
       // slope as src/cake/resolve.js's dripTermOf() gives it.
-      float term = cutOff - q.y;
+      float term = cutOff - q.y - topOffset *
+        (1.0 - cutOff / max(toppingBaseMeters, WONKY_LEAST_LENGTH_METERS));
       if (toppingDripMeters > 0.0) {
         float slope = 0.5 * toppingDripMeters * skirtFraction * (
           toppingDripWaves +

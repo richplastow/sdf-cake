@@ -73,6 +73,23 @@ export const isLastGuessPage = (index, pages) => {
   return next === null || pages[next].kind !== "guess";
 };
 
+/** #### Tells whether a page is the tour's last `presentation` page
+ * - Derived from `pages`: a `presentation` page with no `presentation`
+ *   page anywhere after it on the tour, so an off-tour cake followed by
+ *   an interlude and more cakes is not the last.
+ * @param index The page's index.
+ * @param pages The pages, in tour order.
+ * @returns Whether it is the last `presentation` page.
+ */
+export const isLastPresentationPage = (index, pages) => {
+  if (pages[index].kind !== "presentation") return false;
+  for (let i = nextPageIndex(index, pages); i !== null; ) {
+    if (pages[i].kind === "presentation") return false;
+    i = nextPageIndex(i, pages);
+  }
+  return true;
+};
+
 /** #### Gives the index of the previous page on the tour
  * - Skips a page whose `isOffTour` is true.
  * @param index The current page's index.

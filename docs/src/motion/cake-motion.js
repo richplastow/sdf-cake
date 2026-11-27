@@ -78,7 +78,10 @@ const SLOT_STAGGER_SECONDS = 0.03;
 // The sprung numbers of each part, as the resolver names them: lengths on
 // the length spring, and surface numbers on the colour spring. A layer's
 // inclusion weights, an array, are not sprung: retargetParts() copies
-// them in.
+// them in. A layer's wonky numbers are surface numbers too: its `rise`,
+// its `soft` as 0 or 1, and its direction as `wonkyCosine` and
+// `wonkySine`, as surfaceOfLayer() derives them, so they ease between
+// cakes and a layer appearing from nothing takes them at once.
 const COLOR_CHANNELS = ["r", "g", "b"];
 const LAYER_LENGTH_KEYS = [
   "bottomRadiusMeters",
@@ -94,6 +97,7 @@ const LAYER_SURFACE_KEYS = [
   "crustSaturation",
   "holeFill",
   "holeStrength",
+  "rise",
   "roughness",
   "scorch",
   "scorchClustering",
@@ -101,7 +105,10 @@ const LAYER_SURFACE_KEYS = [
   "scorchScale",
   "scorchSeed",
   "scorchVariety",
+  "soft",
   "translucency",
+  "wonkyCosine",
+  "wonkySine",
 ];
 const PLATE_LENGTH_KEYS = [
   "baseRadiusMeters",
@@ -144,7 +151,10 @@ const SHOWER_SINKING = -1;
  * - `values` has the resolved cake's shape, with each colour as sRGB
  *   channels `r`, `g` and `b`, from 0 to 1, and the topping's footing and
  *   the bounds derived from the layers, which at rest equal the
- *   resolver's.
+ *   resolver's. Its `wonky` and `wonkyPhasesRadians` spring on the colour
+ *   spring, and each layer's `soft`, 0 to 1, `wonkyCosine` and
+ *   `wonkySine` with its `rise`; its `wonkyAngleRadians` stays as first
+ *   resolved and is not read.
  * - `values.decorations` holds `DECORATION_SLOTS` items and the scatter,
  *   each with its animated `offsetMeters`, `scale` and `flame`, 0 out to
  *   1 lit, which only a candle's lights; the `count` of
@@ -183,6 +193,8 @@ export const createCakeMotion = (cake) => {
       plate: { ...cake.bounds.plate },
       stack: { ...cake.bounds.stack },
     },
+    wonky: cake.wonky,
+    wonkyPhasesRadians: [...cake.wonkyPhasesRadians],
   };
   const motion = {
     bottoms: cake.layers.map((layer) => createSpring(layer.bottomMeters)),
@@ -205,6 +217,7 @@ export const createCakeMotion = (cake) => {
         LAYER_LENGTH_KEYS,
         LAYER_SURFACE_KEYS,
         values.layers[slot],
+        surfaceOfLayer,
       ),
     ),
     pendingBody: null,
@@ -227,6 +240,8 @@ export const createCakeMotion = (cake) => {
       values.topping,
     ),
     values,
+    wonky: createSpring(cake.wonky),
+    wonkyPhases: cake.wonkyPhasesRadians.map(createSpring),
   };
   stepCakeMotion(motion, 0);
   return motion;
@@ -390,6 +405,10 @@ const retargetParts = (motion, cake) => {
     motion.coverage.value < SETTLE_COVERAGE,
   );
   motion.coverage.target = cake.topping.coverage;
+  motion.wonky.target = cake.wonky;
+  for (let index = 0; index < motion.wonkyPhases.length; index++) {
+    motion.wonkyPhases[index].target = cake.wonkyPhasesRadians[index];
+  }
 
   const { drips } = motion;
   drips.targetMeters = cake.topping.dripMeters;
@@ -405,6 +424,7 @@ const retargetParts = (motion, cake) => {
  * - Steps every spring, then each layer's bottom towards the sum of the
  *   current heights beneath it, each clamped at 0, so upper layers hang
  *   over a shrinking stack and bounce on a growing one.
+ * - Steps the wonkiness and its phases on the colour spring.
  * - Eases the slice by smoothstep over `SLICE_SECONDS`.
  * - Withdraws the drips linearly over `DRIP_WITHDRAW_SECONDS`, switches
  *   their wave count at 0, and runs them down by smoothstep over
@@ -448,6 +468,13 @@ export const stepCakeMotion = (motion, deltaSeconds) => {
   stepPart(motion.topping, dt);
   stepSpring(motion.coverage, LENGTH_SPRING, dt);
   values.topping.coverage = motion.coverage.value;
+  stepSpring(motion.wonky, COLOR_SPRING, dt);
+  values.wonky = motion.wonky.value;
+  for (let index = 0; index < motion.wonkyPhases.length; index++) {
+    const phase = motion.wonkyPhases[index];
+    stepSpring(phase, COLOR_SPRING, dt);
+    values.wonkyPhasesRadians[index] = phase.value;
+  }
 
   let stackMeters = 0;
   for (let slot = 0; slot < LAYER_SLOTS; slot++) {
@@ -473,6 +500,7 @@ export const stepCakeMotion = (motion, deltaSeconds) => {
     values.layers,
     values.plate,
     values.topping,
+    values.wonky,
   );
 };
 
@@ -537,7 +565,8 @@ const copyPart = (part) => ({
 
 /** #### Creates one decoration's state and values, empty
  * - Its `rotation` is nine numbers, column-major; its `color`, sRGB
- *   channels. The scatter uses the same shape, with `cellMeters` and its
+ *   channels; its `topOffsetMeters`, the wonky top's offset at its point,
+ *   as placed. The scatter uses the same shape, with `cellMeters` and its
  *   shower's four numbers.
  */
 const createItem = () => ({
@@ -563,6 +592,7 @@ const createItem = () => ({
   showerPhase: SHOWER_RESTING,
   showerReachMeters: 0,
   showerSpread: 0,
+  topOffsetMeters: 0,
   xMeters: 0,
   zMeters: 0,
 });
@@ -574,20 +604,29 @@ const createItem = () => ({
  *   spring.
  * @param partValues The part's entry in the motion's `values`, which
  *   stepPart() writes.
+ * @param surfaceOf Gives a resolved part's surface number by name:
+ *   surfaceOfPart(), the default, or surfaceOfLayer().
  * @returns The part: its springs, keys and values.
  */
-const createPart = (resolved, lengthKeys, surfaceKeys, partValues) => {
+const createPart = (
+  resolved,
+  lengthKeys,
+  surfaceKeys,
+  partValues,
+  surfaceOf = surfaceOfPart,
+) => {
   const part = {
     color: {},
     lengthKeys,
     lengths: {},
     surfaceKeys,
+    surfaceOf,
     surfaces: {},
     values: partValues,
   };
   for (const key of lengthKeys) part.lengths[key] = createSpring(resolved[key]);
   for (const key of surfaceKeys) {
-    part.surfaces[key] = createSpring(resolved[key]);
+    part.surfaces[key] = createSpring(surfaceOf(resolved, key));
   }
   for (const channel of COLOR_CHANNELS) {
     part.color[channel] = createSpring(partValues.color[channel]);
@@ -624,6 +663,7 @@ const installDecorations = (
     item.kindId = placed.kindId;
     item.restScale = placed.scale;
     item.roughness = placed.roughness;
+    item.topOffsetMeters = placed.topOffsetMeters;
     item.xMeters = placed.xMeters;
     item.zMeters = placed.zMeters;
     for (let index = 0; index < 9; index++) {
@@ -730,7 +770,11 @@ const retargetPart = (part, resolved, isPresent, isAppearing) => {
   for (const key of part.lengthKeys) part.lengths[key].target = resolved[key];
   if (!isPresent) return;
   for (const key of part.surfaceKeys) {
-    retargetSpring(part.surfaces[key], resolved[key], isAppearing);
+    retargetSpring(
+      part.surfaces[key],
+      part.surfaceOf(resolved, key),
+      isAppearing,
+    );
   }
   for (let index = 0; index < COLOR_CHANNELS.length; index++) {
     retargetSpring(
@@ -765,6 +809,8 @@ const snapCakeMotion = (motion) => {
   snapPart(motion.plate);
   snapPart(motion.topping);
   snapSpring(motion.coverage);
+  snapSpring(motion.wonky);
+  for (const phase of motion.wonkyPhases) snapSpring(phase);
 
   motion.slice.progress = 1;
 
@@ -1026,3 +1072,24 @@ const stepShower = (item, elapsedSeconds) => {
     item.showerSpread = 0;
   }
 };
+
+/** #### Gives a resolved layer's surface number by name, to spring
+ * - Its `soft` as 1 or 0, and its direction, `wonkyAngleRadians`, as its
+ *   cosine, `wonkyCosine`, and sine, `wonkySine`, numbers a spring can
+ *   ease without wrapping; any other number as the resolver holds it.
+ */
+const surfaceOfLayer = (resolved, key) => {
+  switch (key) {
+    case "soft":
+      return resolved.soft ? 1 : 0;
+    case "wonkyCosine":
+      return Math.cos(resolved.wonkyAngleRadians);
+    case "wonkySine":
+      return Math.sin(resolved.wonkyAngleRadians);
+    default:
+      return resolved[key];
+  }
+};
+
+/** Gives a resolved part's surface number by name, as the resolver holds it. */
+const surfaceOfPart = (resolved, key) => resolved[key];

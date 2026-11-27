@@ -17,6 +17,10 @@ const ARTEMIS_SCORCH_CLUSTERING = 0;
 const ARTEMIS_SCORCH_COVERAGE = 0.3;
 const ARTEMIS_SCORCH_SCALE = 1.5;
 
+// The rise of a soft layer, unitless, on the scale of a material's `rise`:
+// a cream or jam levels up over the sag of the sponge beneath it.
+const SOFT_RISE = 0.5;
+
 // The palette every recipe names its materials from, first guesses to tune
 // by eye. Each entry gives a colour as an sRGB `#rrggbb` string, a
 // roughness as Three.js's physical shading takes it, 0 to 1, a metalness,
@@ -33,7 +37,10 @@ const ARTEMIS_SCORCH_SCALE = 1.5;
 // places them, `scorchScale` scales the patches, `scorchCoverage`, about 0
 // to 0.4, spreads them, `scorchSeed`, any whole number, picks another
 // pattern, and `scorchVariety`, 0 to 1, ranges their colour between muted
-// brown and grey.
+// brown and grey. A layer's material may give a `rise`, -1 to 1, how far
+// its top sags, below 0, or domes, above 0, with the cake's `wonky`, as
+// src/cake/wonky.js shapes it, and `soft`, true for a filling that is set
+// off its sponge and oozes past it; left out, they are 0 and false.
 export const MATERIALS = {
   sponge: {
     color: "#eed59a",
@@ -42,6 +49,7 @@ export const MATERIALS = {
     holeStrength: 0.7,
     holeCellMeters: 0.0025,
     crust: LIGHT_CRUST,
+    rise: -0.5,
   },
   chocolateSponge: {
     color: "#5a3a22",
@@ -50,6 +58,7 @@ export const MATERIALS = {
     holeStrength: 1,
     holeCellMeters: 0.004,
     crust: LIGHT_CRUST,
+    rise: -0.5,
   },
   fruitCake: {
     color: "#4a2c14",
@@ -58,6 +67,7 @@ export const MATERIALS = {
     holeStrength: 0.6,
     holeCellMeters: 0.003,
     crust: LIGHT_CRUST,
+    rise: -0.2,
   },
   jam: {
     color: "#a8182e",
@@ -66,6 +76,8 @@ export const MATERIALS = {
     holeStrength: 0,
     holeCellMeters: 0,
     translucency: JAM_TRANSLUCENCY,
+    rise: SOFT_RISE,
+    soft: true,
   },
   honey: {
     color: "#c98a1b",
@@ -74,6 +86,8 @@ export const MATERIALS = {
     holeStrength: 0,
     holeCellMeters: 0,
     translucency: HONEY_TRANSLUCENCY,
+    rise: SOFT_RISE,
+    soft: true,
   },
   flatbread: {
     color: "#c4b29c",
@@ -90,6 +104,7 @@ export const MATERIALS = {
     scorchScale: 1,
     scorchSeed: 0,
     scorchVariety: 1,
+    rise: 0.6,
   },
   moonSponge: {
     color: "#eceef3",
@@ -102,6 +117,7 @@ export const MATERIALS = {
     scorchClustering: ARTEMIS_SCORCH_CLUSTERING,
     scorchCoverage: ARTEMIS_SCORCH_COVERAGE,
     scorchScale: ARTEMIS_SCORCH_SCALE,
+    rise: 0,
   },
   greyMoonSponge: {
     color: "#c3c6cc",
@@ -114,6 +130,7 @@ export const MATERIALS = {
     scorchClustering: ARTEMIS_SCORCH_CLUSTERING,
     scorchCoverage: ARTEMIS_SCORCH_COVERAGE,
     scorchScale: ARTEMIS_SCORCH_SCALE,
+    rise: 0,
   },
   silverIcing: {
     color: "#e4e7ed",
@@ -129,6 +146,7 @@ export const MATERIALS = {
     holeStrength: 0.6,
     holeCellMeters: 0.003,
     crust: LIGHT_CRUST,
+    rise: -0.3,
   },
   apricotJam: {
     color: "#d9821e",
@@ -137,6 +155,8 @@ export const MATERIALS = {
     holeStrength: 0,
     holeCellMeters: 0,
     translucency: JAM_TRANSLUCENCY,
+    rise: SOFT_RISE,
+    soft: true,
   },
   sacherGlaze: {
     color: "#2a160c",
@@ -153,6 +173,7 @@ export const MATERIALS = {
     holeCellMeters: 0.004,
     holeFill: true,
     crust: LIGHT_CRUST,
+    rise: -0.3,
   },
   brigadeiroGlaze: {
     color: "#3a2010",
@@ -168,6 +189,7 @@ export const MATERIALS = {
     holeStrength: 1,
     holeCellMeters: 0.003,
     crust: 0.875,
+    rise: -0.4,
   },
   pancake: {
     color: "#f0d9a0",
@@ -183,6 +205,7 @@ export const MATERIALS = {
     // Change to any other whole number to try another pattern.
     scorchSeed: 0,
     scorchVariety: 4,
+    rise: 1,
   },
   cream: {
     color: "#fff4e0",
@@ -190,6 +213,8 @@ export const MATERIALS = {
     metalness: 0,
     holeStrength: 0,
     holeCellMeters: 0,
+    rise: SOFT_RISE,
+    soft: true,
   },
   ganache: {
     color: "#3b2314",
@@ -197,6 +222,8 @@ export const MATERIALS = {
     metalness: 0,
     holeStrength: 0,
     holeCellMeters: 0,
+    rise: SOFT_RISE,
+    soft: true,
   },
   darkGanache: {
     color: "#24140b",
@@ -204,6 +231,8 @@ export const MATERIALS = {
     metalness: 0,
     holeStrength: 0,
     holeCellMeters: 0,
+    rise: SOFT_RISE,
+    soft: true,
   },
   berryCoulis: {
     color: "#6e0b1f",
@@ -218,6 +247,7 @@ export const MATERIALS = {
     metalness: 0,
     holeStrength: 0,
     holeCellMeters: 0,
+    rise: 0.3,
   },
   pastry: {
     color: "#d9a861",
@@ -226,6 +256,7 @@ export const MATERIALS = {
     holeStrength: 0.3,
     holeCellMeters: 0.002,
     crust: LIGHT_CRUST,
+    rise: 0.2,
   },
   biscuit: {
     color: "#b88a4a",
@@ -234,6 +265,7 @@ export const MATERIALS = {
     holeStrength: 0.5,
     holeCellMeters: 0.002,
     crust: LIGHT_CRUST,
+    rise: 0,
   },
   cheesecake: {
     color: "#f5e6c8",
@@ -241,6 +273,7 @@ export const MATERIALS = {
     metalness: 0,
     holeStrength: 0,
     holeCellMeters: 0,
+    rise: -0.4,
   },
   strawberryIcing: {
     color: "#f2a1bb",

@@ -8,8 +8,13 @@
 
 import { Color, SRGBColorSpace } from "three";
 import { DECORATION_SLOTS, LAYER_SLOTS } from "../cake/slots.js";
+import {
+  WONKY_TEAR_METERS,
+  WONKY_TEAR_RADIANS_PER_METER,
+  wonkyRadiusOf,
+} from "../cake/wonky.js";
 import { crumbChunk } from "./crumb.js";
-import { decorationsChunk } from "./decorations.js";
+import { decorationsChunk, toGlslFloat } from "./decorations.js";
 import { layersChunk } from "./layers.js";
 import { plateChunk } from "./plate.js";
 import { toppingChunk } from "./topping.js";
@@ -34,6 +39,9 @@ import { toppingChunk } from "./topping.js";
  *   in a translucent topping shows through it. For a shadow ray, it reads
  *   the layers without their holes, the candles without their flames and
  *   the decorations without their slab's shortcut.
+ * - The cake's `wonky` shapes its layers, as src/sdf/layers.js sets out,
+ *   lays the topping over the wonky top, and tears the eaten slice's cut
+ *   by eatenTearAt(); the plate stays round and the decorations keep p.
  */
 export const cakeChunk = /* glsl */ `
   ${crumbChunk}
@@ -67,15 +75,23 @@ export const cakeChunk = /* glsl */ `
   const float INCLUSION_INSET_METERS = -0.001;
   const float LAYER_METALNESS = 0.0; // no layer is a metal
   const float TOPPING_METALNESS = 0.0; // no topping is a metal
+  // The torn slice, from src/cake/wonky.js: how far its cut wanders, in
+  // metres per unit of wonky, and the tear's frequency, in radians per
+  // metre.
+  const float WONKY_TEAR_METERS = ${toGlslFloat(WONKY_TEAR_METERS)};
+  const float WONKY_TEAR_RADIANS_PER_METER = ${toGlslFloat(
+    WONKY_TEAR_RADIANS_PER_METER,
+  )};
 
   // The material id of the inclusion at a point of the slot's layer, or
   // 0.0 for none: inclusionAt()'s, where the layer has inclusions and the
-  // point lies deeper than INCLUSION_INSET_METERS inside its plain layer.
+  // point lies deeper than INCLUSION_INSET_METERS inside its plain layer,
+  // the wonky layer the march hit, in its frame.
   float layerInclusionAt(vec3 point, int slot) {
     float cellMeters = layerCrumbs[slot].z;
     if (cellMeters <= 0.0) return 0.0;
-    vec2 q = vec2(length(point.xz), point.y);
-    if (layerPlainDistance(point, q, slot) >= INCLUSION_INSET_METERS) {
+    vec4 frame = layerFrameAt(point, slot);
+    if (layerPlainDistance(point, frame, slot) >= INCLUSION_INSET_METERS) {
       return 0.0;
     }
     return inclusionAt(point, cellMeters, layerInclusionWeights[slot]);
@@ -92,8 +108,7 @@ export const cakeChunk = /* glsl */ `
   bool layerHoleFilledAt(vec3 point, int slot) {
     if (layerHoleFills[slot] <= 0.5) return false;
     vec4 crumb = layerCrumbs[slot];
-    vec2 q = vec2(length(point.xz), point.y);
-    float plain = layerPlainDistance(point, q, slot);
+    float plain = layerPlainDistance(point, layerFrameAt(point, slot), slot);
     float holed = holesDistance(point, crumb.y, plain, crumb.x);
     return holed > HOLE_FILL_DEPTH_METERS;
   }
@@ -111,8 +126,8 @@ export const cakeChunk = /* glsl */ `
     if (crust <= 0.0 && scorch.x <= 0.0) {
       return layerColors[slot];
     }
-    vec2 q = vec2(length(point.xz), point.y);
-    float depth = -layerPlainDistance(point, q, slot);
+    float depth =
+      -layerPlainDistance(point, layerFrameAt(point, slot), slot);
     float outer = 1.0 - smoothstep(0.0, CRUST_DEPTH_METERS, depth);
     vec3 color = layerColors[slot];
     vec3 crustColor = dot(color, LUMINANCE_WEIGHTS) <
@@ -154,20 +169,34 @@ export const cakeChunk = /* glsl */ `
     return decorationAlbedoOf(materialId, point);
   }
 
+  // How far the torn cut stands out of the eaten slice at p, in metres:
+  // wonky x WONKY_TEAR_METERS x sin(k y) sin(k r), r the distance from the
+  // axis, iq's product of sines, his displacement example,
+  // https://iquilezles.org/articles/distfunctions/. It breaks the bound by
+  // WONKY_TEAR_GRADIENT per unit of wonky, which the march's step factor
+  // covers.
+  float eatenTearAt(vec3 p) {
+    return wonky * WONKY_TEAR_METERS *
+      sin(WONKY_TEAR_RADIANS_PER_METER * p.y) *
+      sin(WONKY_TEAR_RADIANS_PER_METER * length(p.xz));
+  }
+
   // The stack's distance with the eaten slice cut from it. Up to half a
   // turn the cut is a wedge about +X. Past it, the stack is intersected,
   // by iq's opIntersection, a bound, with the complementary wedge about
   // -X, which wedgeDistance() gives with p.x negated; both forms agree at
-  // half a turn. An angle of 0 cuts nothing and is skipped, as its wedge
-  // would be the half-plane z = 0 on the +X side, which bends the normals
-  // along it.
+  // half a turn. The tear, eatenTearAt(), is added to the cut's term in
+  // both forms, so they still agree there and the torn faces never jump.
+  // An angle of 0 cuts nothing and is skipped, as its wedge would be the
+  // half-plane z = 0 on the +X side, which bends the normals along it.
   float eatenStackDistance(vec3 p, float stack) {
     if (eatenAngleRadians <= 0.0) return stack;
     float halfAngle = 0.5 * eatenAngleRadians;
+    float tear = eatenTearAt(p);
     if (halfAngle <= PI_HALF) {
-      return subtractDistance(wedgeDistance(p.xz, halfAngle), stack);
+      return subtractDistance(wedgeDistance(p.xz, halfAngle) - tear, stack);
     }
-    return max(wedgeDistance(vec2(-p.x, p.z), PI - halfAngle), stack);
+    return max(wedgeDistance(vec2(-p.x, p.z), PI - halfAngle) + tear, stack);
   }
 
   // The field at p: x is the distance to the cake in metres, negative
@@ -177,7 +206,15 @@ export const cakeChunk = /* glsl */ `
   //
   // Every part is a solid of revolution about the Y axis, so the parts take
   // p in their plane of revolution, q: iq's opRevolution, with o = 0,
-  // https://iquilezles.org/articles/distfunctions/.
+  // https://iquilezles.org/articles/distfunctions/. The wonky shapes are
+  // worked out once per sample: the outline's shift of the radius and
+  // every slot's top offset, added up the stack as levels, the offsets of
+  // each slot's bottom and of the stack's top. The layers read them in
+  // their frames, as src/sdf/layers.js sets out, and the topping takes q
+  // outlined and lowered by the stack's top offset, so its cap, floor,
+  // pile, drips and carve ride the wonky top. The plate keeps the round q,
+  // so it stays round, and the bounds read it, grown to hold the wonky
+  // layers.
   //
   // The part whose bound is least is evaluated first, then the layers in
   // slot order, each skipped where its bound is no nearer than the nearest
@@ -207,6 +244,13 @@ export const cakeChunk = /* glsl */ `
   // decorationsField() says.
   vec2 cakeFieldOf(vec3 p, int hidden, bool isShadowRay) {
     vec2 q = vec2(length(p.xz), p.y);
+    float outline = wonkyOutlineAt(p);
+    float lumps = wonkyLumpsAt(p.xz);
+    float levels[LAYER_LEVELS];
+    levels[0] = 0.0;
+    for (int slot = 0; slot < LAYER_SLOTS; slot++) {
+      levels[slot + 1] = levels[slot] + layerTopOffsetAt(p.xz, lumps, slot);
+    }
 
     // The part whose bound is least: a layer's slot, or -1 for the plate.
     float plateBound = plateBoundDistance(q);
@@ -231,12 +275,25 @@ export const cakeChunk = /* glsl */ `
     if (firstSlot < 0) {
       plate = plateField(q);
     } else {
-      first = layerDistance(p, q, firstSlot, isShadowRay);
+      first = layerDistance(
+        p,
+        layerFrameOf(
+          p,
+          firstSlot,
+          outline,
+          levels[firstSlot],
+          levels[firstSlot + 1]
+        ),
+        firstSlot,
+        isShadowRay
+      );
       stack.xy = vec2(first, float(firstSlot));
     }
     stack = layersField(
       p,
       q,
+      outline,
+      levels,
       toppingSkirtBlend(),
       min(plate.x + toppingThicknessMeters, stack.x),
       firstSlot,
@@ -247,7 +304,12 @@ export const cakeChunk = /* glsl */ `
     );
     vec2 cake = stack.xy;
     if (hidden == HIDE_NONE || hidden >= HIDE_DECORATION_FIRST) {
-      vec2 topping = toppingField(p, q, stack.z);
+      vec2 topping = toppingField(
+        p,
+        vec2(q.x - outline, q.y - levels[LAYER_SLOTS]),
+        stack.z,
+        levels[LAYER_SLOTS]
+      );
       if (topping.x < cake.x) cake = topping;
     }
     vec2 decorations = decorationsField(
@@ -340,6 +402,9 @@ export const createCakeUniforms = () => ({
   layerScorches: { value: new Float32Array(4 * LAYER_SLOTS) },
   layerScorchSeeds: { value: new Float32Array(LAYER_SLOTS) },
   layerScorchClusterings: { value: new Float32Array(LAYER_SLOTS) },
+  // Four numbers a slot: its rise, its softness, 0 to 1, and its
+  // direction's cosine and sine.
+  layerWonkies: { value: new Float32Array(4 * LAYER_SLOTS) },
   plateBaseRadiusMeters: { value: 0 },
   plateBoundBottomMeters: { value: 0 },
   plateBoundRadiusMeters: { value: 0 },
@@ -371,6 +436,9 @@ export const createCakeUniforms = () => ({
   toppingThicknessMeters: { value: 0 },
   toppingTranslucency: { value: 0 },
   toppingInvisible: { value: 0 },
+  wonky: { value: 0 },
+  wonkyPhasesRadians: { value: new Float32Array(3) },
+  wonkyRadiusMeters: { value: 0 },
 });
 
 /** #### Copies a cake's values into the cake's uniforms, in place
@@ -384,11 +452,13 @@ export const createCakeUniforms = () => ({
  *   march's copy of the stack's top, `stackBoundTopMeters`, by the
  *   greatest current drop offset above rest, so the bound never clips a
  *   falling item; the camera's fit reads `values.bounds`, without it.
+ * - Derives `wonkyRadiusMeters` from the sprung layers, by wonkyRadiusOf()
+ *   in src/cake/wonky.js, so it springs with them.
  * - Clamps, since an underdamped spring can pass through 0: every length
  *   at 0 and below, so a layer's bottom never sinks into the plate, the
- *   coverage within 0 and 1, each layer's hole strength and translucency
- *   within 0 and 1, and each layer's rounding at the least of its radii
- *   and half its height.
+ *   coverage, the wonkiness and each layer's softness within 0 and 1, each
+ *   layer's hole strength and translucency within 0 and 1, and each
+ *   layer's rounding at the least of its radii and half its height.
  * - Allocates nothing, so it is safe on the per-frame path.
  * @param uniforms The material's uniforms, as createCakeUniforms() made
  *   them and UniformsUtils.merge() copied them.
@@ -400,9 +470,16 @@ export const writeCakeUniforms = (uniforms, values) => {
   const { bounds, decorations, layers, plate, topping } = values;
 
   uniforms.eatenAngleRadians.value = values.eatenAngleRadians;
+  uniforms.wonky.value = Math.min(Math.max(values.wonky, 0), 1);
+  for (let index = 0; index < 3; index++) {
+    uniforms.wonkyPhasesRadians.value[index] =
+      values.wonkyPhasesRadians[index];
+  }
+  uniforms.wonkyRadiusMeters.value = wonkyRadiusOf(layers);
 
   const crumbs = uniforms.layerCrumbs.value;
   const weights = uniforms.layerInclusionWeights.value;
+  const wonkies = uniforms.layerWonkies.value;
   for (let slot = 0; slot < LAYER_SLOTS; slot++) {
     const layer = layers[slot];
     const bottomRadiusMeters = Math.max(layer.bottomRadiusMeters, 0);
@@ -450,6 +527,10 @@ export const writeCakeUniforms = (uniforms, values) => {
       Math.max(layer.translucency, 0),
       1,
     );
+    wonkies[4 * slot] = layer.rise;
+    wonkies[4 * slot + 1] = Math.min(Math.max(layer.soft, 0), 1);
+    wonkies[4 * slot + 2] = layer.wonkyCosine;
+    wonkies[4 * slot + 3] = layer.wonkySine;
   }
 
   uniforms.plateBaseRadiusMeters.value = Math.max(plate.baseRadiusMeters, 0);
@@ -494,8 +575,9 @@ export const writeCakeUniforms = (uniforms, values) => {
 };
 
 /** #### Copies the decorations' values into their uniforms, in place
- * - Each slot's offset holds its x, its animated height offset, its z and
- *   its flame, 0 out to 1 lit; its scale, the hash's times the
+ * - Each slot's offset holds its x, its animated height offset raised by
+ *   its wonky top offset, so decorationCenterOf() seats it on the wonky
+ *   top, its z and its flame, 0 out to 1 lit; its scale, the hash's times the
  *   animation's, is clamped at 0.
  * - The scatter's shower packs its clock, spread, phase and reach in
  *   metres, which the shader applies to each scattered item at its cue.
@@ -511,7 +593,7 @@ const writeDecorationUniforms = (uniforms, decorations) => {
     uniforms.decorationEmbedsMeters.value[slot] = item.embedMeters;
     uniforms.decorationKinds.value[slot] = item.kindId;
     offsets[4 * slot] = item.xMeters;
-    offsets[4 * slot + 1] = item.offsetMeters;
+    offsets[4 * slot + 1] = item.offsetMeters + item.topOffsetMeters;
     offsets[4 * slot + 2] = item.zMeters;
     offsets[4 * slot + 3] = item.flame;
     uniforms.decorationRoughnesses.value[slot] = item.roughness;

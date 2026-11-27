@@ -29,7 +29,10 @@ import { DECORATION_SLOTS } from "../cake/slots.js";
  * - Each item stands on toppingSurfaceHeight() at its radius, less its
  *   embed, so it rides the topping as it moves, raised by its animated
  *   offset: a slot's own, or for a scattered item the shower's, at the
- *   item's own hashed cue, so the scatter falls and sinks as a shower.
+ *   item's own hashed cue, so the scatter falls and sinks as a shower. It
+ *   rides the wonky top too: a slot's offset holds its top offset, placed
+ *   by src/cake/place.js, and a scattered item adds its cell's,
+ *   layerStackTopOffsetAt() at its centre.
  * - decorationAlbedoOf() and decorationRoughnessOf() map a decoration's
  *   material id to its surface; a sprinkle's colour is found again from
  *   the point, by its cell's hash.
@@ -166,7 +169,8 @@ export const decorationsChunk = /* glsl */ `
   // it is not drawn before 0, then falls from the reach, eased in;
   // sinking, it sinks the reach below its rest, eased out, shrinking to
   // scale 0, when it is not drawn. stepItem() in src/motion/cake-motion.js
-  // moves a slot's item by the same curves.
+  // moves a slot's item by the same curves. Each item stands on the wonky
+  // top, raised by layerStackTopOffsetAt() at its centre.
   vec2 scatterNearest(vec3 p) {
     int kind = int(scatterKind + 0.5);
     float cell = scatterCellMeters;
@@ -222,7 +226,8 @@ export const decorationsChunk = /* glsl */ `
       }
 
       float halfHeight = DECORATION_HALF_HEIGHTS_METERS[kind] * scale;
-      float y = toppingSurfaceHeight(radius) -
+      float y = toppingSurfaceHeight(radius) +
+        layerStackTopOffsetAt(centre) -
         DECORATION_EMBEDS[kind] * 2.0 * halfHeight + halfHeight + offset;
       vec3 local = p - vec3(centre.x, y, centre.y);
       local.xz = turnVector(local.xz, yaw);
@@ -236,7 +241,8 @@ export const decorationsChunk = /* glsl */ `
   }
 
   // A slot's item's centre, in metres: on toppingSurfaceHeight() at its
-  // radius, less its embed, raised by its animated offset.
+  // radius, less its embed, raised by its offset, its animated offset and
+  // its wonky top offset, which writeCakeUniforms() adds together.
   vec3 decorationCenterOf(int slot, int kind, float scale) {
     vec4 offset = decorationOffsets[slot];
     float halfHeight = DECORATION_HALF_HEIGHTS_METERS[kind] * scale;

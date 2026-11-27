@@ -10,8 +10,9 @@
  * @param handlers `onReveal`, called with no arguments on Reveal.
  * @returns `showPrompt`, which takes `"up"`, `"bite"`, `"guess"`,
  *   `"blocked-up"`, `"blocked-reveal"`, `"name"`, `"name-next"` or
- *   `"name-deeper"`, the guess flow's, `"end"`, autoplay's at the end of
- *   a presentation cake, `"next-up"`, `"next-right"`, `"back-down"` or
+ *   `"name-deeper"`, the guess flow's, `"end"` or `"end-last"`,
+ *   autoplay's at the end of a presentation cake or the last one,
+ *   `"next-up"`, `"next-right"`, `"back-down"` or
  *   `"back-left"`, src/tour/path.js's hint for a blocked move, or `null`
  *   for none, and the cake's name for the name prompts.
  */

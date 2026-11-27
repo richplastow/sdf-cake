@@ -5,7 +5,9 @@
  * by the scene's lights.
  */
 
+import { WONKY_GRADIENT } from "../cake/wonky.js";
 import { cakeChunk } from "../sdf/cake.js";
+import { toGlslFloat } from "../sdf/decorations.js";
 import { primitivesChunk } from "../sdf/primitives.js";
 
 /** #### The fragment shader of the full-screen quad
@@ -61,6 +63,14 @@ export const raymarchFragmentShader = /* glsl */ `
   // distance never crosses the surface. It sits here, not on the layer's
   // term, since a scaled layer would also thin the topping's coat.
   const float IRREGULARITY_STEP_FACTOR = 0.9;
+  // How far the wonky shapes raise the field's gradient per unit of wonky,
+  // unitless, from src/cake/wonky.js: the outline's, the tops' and the
+  // tear's summed, 1.26, though they peak at different points, so one step
+  // factor, 1 / (1 + WONKY_GRADIENT x wonky), keeps the bound everywhere:
+  // about 0.53 on the pancake and 0.94 on the Sachertorte. The shadow and
+  // glaze marches take none: a shadow step is clamped short of the
+  // thinnest wonky solid, and a glaze march is a few steps beneath a hit.
+  const float WONKY_GRADIENT = ${toGlslFloat(WONKY_GRADIENT)};
   const float SURFACE_EPSILON_METERS = 0.0001;
   // The offset either side of a hit point over which the normal is read.
   const float NORMAL_EPSILON_METERS = 0.0005;
@@ -284,7 +294,7 @@ export const raymarchFragmentShader = /* glsl */ `
   // Marches the ray from the start distance until it hits the cake, runs
   // out of steps or passes the end distance, where it leaves the bound,
   // stepping IRREGULARITY_STEP_FACTOR of the distance while any layer has
-  // an irregularity.
+  // an irregularity, and that over 1 + WONKY_GRADIENT x wonky.
   Hit march(
     vec3 origin,
     vec3 direction,
@@ -296,6 +306,7 @@ export const raymarchFragmentShader = /* glsl */ `
     for (int slot = 0; slot < LAYER_SLOTS; slot++) {
       if (layerCrumbs[slot].w > 0.0) stepFactor = IRREGULARITY_STEP_FACTOR;
     }
+    stepFactor /= 1.0 + WONKY_GRADIENT * wonky;
     for (int i = 0; i < MAX_MARCH_STEPS; i++) {
       vec2 field = cakeField(origin + direction * hit.distanceMeters);
       if (field.x < SURFACE_EPSILON_METERS) {
@@ -332,13 +343,14 @@ export const raymarchFragmentShader = /* glsl */ `
   // Rendering Worlds with Two Triangles,
   // https://iquilezles.org/articles/nvscene2008/.
   //
-  // It reads the slot's own layer alone, holed beneath its skin, with the
-  // half-space beyond the eaten slice's face on p's side cut from it, so
-  // only the crumb's own holes occlude. The whole field would also read
-  // the decorations' slab and the scatter's clamp, lower bounds that lie
-  // millimetres short of the true distance and darkened a band round the
-  // layers and the honey cake's invisible cap, and the facing cut face
-  // across a narrow slice, which darkened its apex.
+  // It reads the slot's own layer alone, the wonky layer in its frame at
+  // each read, holed beneath its skin, with the half-space beyond the
+  // eaten slice's face on p's side cut from it, torn as the cut is torn by
+  // eatenTearAt(), so only the crumb's own holes occlude. The whole field
+  // would also read the decorations' slab and the scatter's clamp, lower
+  // bounds that lie millimetres short of the true distance and darkened a
+  // band round the layers and the honey cake's invisible cap, and the
+  // facing cut face across a narrow slice, which darkened its apex.
   //
   // Only a cavity occludes. The plain layer cut by the face is convex, but
   // for its gentle irregularity, so a point on its surface sees none of it
@@ -359,8 +371,8 @@ export const raymarchFragmentShader = /* glsl */ `
     );
     float faceOffset = eatenAngleRadians > 0.0 ? 0.0 : -NO_SURFACE_METERS;
     float depth = -max(
-      layerPlainDistance(p, vec2(length(p.xz), p.y), slot),
-      dot(p.xz, faceNormal) + faceOffset
+      layerPlainDistance(p, layerFrameAt(p, slot), slot),
+      dot(p.xz, faceNormal) + faceOffset + eatenTearAt(p)
     );
     if (depth <= 0.0) return 1.0;
     float shortfall = 0.0;
@@ -369,8 +381,8 @@ export const raymarchFragmentShader = /* glsl */ `
       float along = float(i) * AO_STEP_METERS;
       vec3 s = p + normal * along;
       float d = max(
-        layerDistance(s, vec2(length(s.xz), s.y), slot, false),
-        dot(s.xz, faceNormal) + faceOffset
+        layerDistance(s, layerFrameAt(s, slot), slot, false),
+        dot(s.xz, faceNormal) + faceOffset + eatenTearAt(s)
       );
       shortfall += weight * (along - d) / AO_STEP_METERS;
       weight *= 0.5;
