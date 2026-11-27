@@ -466,7 +466,7 @@ export const stepCakeMotion = (motion, deltaSeconds) => {
   }
   stepPart(motion.plate, dt);
   stepPart(motion.topping, dt);
-  stepSpring(motion.coverage, LENGTH_SPRING, dt);
+  stepLengthSpring(motion.coverage, dt);
   values.topping.coverage = motion.coverage.value;
   stepSpring(motion.wonky, COLOR_SPRING, dt);
   values.wonky = motion.wonky.value;
@@ -1023,6 +1023,26 @@ const stepItem = (item, changeSeconds, isScatter) => {
   }
 };
 
+/** #### Steps a length's spring, stopping at 0 when it heads for 0
+ * - A length is never below 0, so a spring that targets 0, as a hidden
+ *   part's lengths and coverage do, stops there with no velocity the step
+ *   it reaches or passes 0, rather than ringing about 0 on
+ *   `LENGTH_SPRING`. Each upswing of that ringing redrew the part
+ *   briefly, in a sliver too thin to be seen but at its full thickness,
+ *   such as a pin of icing on the axis, flashing about once a second for
+ *   seconds after the part was hidden.
+ * - Allocates nothing.
+ * @param spring The spring, mutated: `value` and `velocity`.
+ * @param dt The time step, in seconds.
+ */
+const stepLengthSpring = (spring, dt) => {
+  stepSpring(spring, LENGTH_SPRING, dt);
+  if (spring.target === 0 && spring.value <= 0) {
+    spring.value = 0;
+    spring.velocity = 0;
+  }
+};
+
 /** #### Steps one part's springs and writes their values
  * - Lengths on `LENGTH_SPRING`, colour channels and surface numbers on
  *   `COLOR_SPRING`.
@@ -1032,7 +1052,7 @@ const stepPart = (part, dt) => {
   const { color, lengthKeys, lengths, surfaceKeys, surfaces, values } = part;
   for (let index = 0; index < lengthKeys.length; index++) {
     const key = lengthKeys[index];
-    stepSpring(lengths[key], LENGTH_SPRING, dt);
+    stepLengthSpring(lengths[key], dt);
     values[key] = lengths[key].value;
   }
   for (let index = 0; index < surfaceKeys.length; index++) {
