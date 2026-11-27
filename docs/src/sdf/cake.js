@@ -354,8 +354,8 @@ export const createCakeUniforms = () => ({
   scatterCellMeters: { value: 0 },
   scatterColor: { value: new Color() },
   scatterKind: { value: 0 },
-  scatterOffsetMeters: { value: 0 },
   scatterScale: { value: 0 },
+  scatterShower: { value: new Float32Array(4) },
   stackBoundBottomMeters: { value: 0 },
   stackBoundRadiusMeters: { value: 0 },
   stackBoundTopMeters: { value: 0 },
@@ -497,6 +497,8 @@ export const writeCakeUniforms = (uniforms, values) => {
  * - Each slot's offset holds its x, its animated height offset, its z and
  *   its flame, 0 out to 1 lit; its scale, the hash's times the
  *   animation's, is clamped at 0.
+ * - The scatter's shower packs its clock, spread, phase and reach in
+ *   metres, which the shader applies to each scattered item at its cue.
  * - Allocates nothing.
  */
 const writeDecorationUniforms = (uniforms, decorations) => {
@@ -523,8 +525,12 @@ const writeDecorationUniforms = (uniforms, decorations) => {
   uniforms.scatterCellMeters.value = scatter.cellMeters;
   setColor(uniforms.scatterColor.value, scatter.color);
   uniforms.scatterKind.value = scatter.kindId;
-  uniforms.scatterOffsetMeters.value = scatter.offsetMeters;
   uniforms.scatterScale.value = Math.max(scatter.scale, 0);
+  const shower = uniforms.scatterShower.value;
+  shower[0] = scatter.showerClock;
+  shower[1] = scatter.showerSpread;
+  shower[2] = scatter.showerPhase;
+  shower[3] = scatter.showerReachMeters;
 };
 
 /** Sets a Color from sRGB channels, from 0 to 1, without allocating. */

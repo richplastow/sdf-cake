@@ -28,7 +28,8 @@ import { DECORATION_SLOTS } from "../cake/slots.js";
  *   march to the part beneath.
  * - Each item stands on toppingSurfaceHeight() at its radius, less its
  *   embed, so it rides the topping as it moves, raised by its animated
- *   offset.
+ *   offset: a slot's own, or for a scattered item the shower's, at the
+ *   item's own hashed cue, so the scatter falls and sinks as a shower.
  * - decorationAlbedoOf() and decorationRoughnessOf() map a decoration's
  *   material id to its surface; a sprinkle's colour is found again from
  *   the point, by its cell's hash.
@@ -52,8 +53,12 @@ export const decorationsChunk = /* glsl */ `
   uniform float scatterCellMeters;
   uniform vec3 scatterColor;
   uniform float scatterKind;
-  uniform float scatterOffsetMeters;
   uniform float scatterScale;
+  // The scatter's shower: x its clock and y its cues' spread, both in one
+  // item's fall or sink, z its phase, 1 dropping, -1 sinking and 0 at
+  // rest, and w its reach in metres, the drop's height or the sink's
+  // depth.
+  uniform vec4 scatterShower;
 
   const int DECORATION_SLOTS = ${DECORATION_SLOTS};
   // How far outside the decorations' slab a point must lie for them to be
@@ -155,7 +160,13 @@ export const decorationsChunk = /* glsl */ `
   // only where it lies wholly within the cap's flat, where
   // toppingSurfaceHeight() is exact. Its rotation is the yaw about Y after
   // the tilts about X and then Z, as src/cake/place.js builds a slot's, so
-  // the point is turned back by the yaw, then the tilts.
+  // the point is turned back by the yaw, then the tilts. Each item draws
+  // its cue, 0 to 1, after its colour, and moves in the shower from
+  // scatterShower.x - cue * scatterShower.y, its own progress: dropping,
+  // it is not drawn before 0, then falls from the reach, eased in;
+  // sinking, it sinks the reach below its rest, eased out, shrinking to
+  // scale 0, when it is not drawn. stepItem() in src/motion/cake-motion.js
+  // moves a slot's item by the same curves.
   vec2 scatterNearest(vec3 p) {
     int kind = int(scatterKind + 0.5);
     float cell = scatterCellMeters;
@@ -195,11 +206,24 @@ export const decorationsChunk = /* glsl */ `
       hash = nextHash(hash);
       float tiltZ = tilt * (2.0 * unitOfHash(hash) - 1.0);
       hash = nextHash(hash);
+      float cue = unitOfHash(nextHash(hash));
+
+      float progress = scatterShower.x - cue * scatterShower.y;
+      if (scatterShower.z > 0.0 && progress < 0.0) continue;
+      progress = clamp(progress, 0.0, 1.0);
+      float offset = 0.0;
+      if (scatterShower.z > 0.0) {
+        offset = scatterShower.w * (1.0 - progress * progress);
+      } else if (scatterShower.z < 0.0) {
+        float left = 1.0 - progress;
+        offset = -scatterShower.w * (1.0 - left * left);
+        scale *= 1.0 - progress * progress;
+        if (scale <= 0.0) continue;
+      }
 
       float halfHeight = DECORATION_HALF_HEIGHTS_METERS[kind] * scale;
       float y = toppingSurfaceHeight(radius) -
-        DECORATION_EMBEDS[kind] * 2.0 * halfHeight + halfHeight +
-        scatterOffsetMeters;
+        DECORATION_EMBEDS[kind] * 2.0 * halfHeight + halfHeight + offset;
       vec3 local = p - vec3(centre.x, y, centre.y);
       local.xz = turnVector(local.xz, yaw);
       local.yz = turnVector(local.yz, -tiltX);

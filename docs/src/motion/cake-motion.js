@@ -61,6 +61,10 @@ const SETTLE_COVERAGE = 0.005;
 // every length spring must be for the layers to count as settled.
 const SETTLE_METERS = 0.0005;
 const SETTLE_METERS_PER_SECOND = 0.005;
+// The spans of time over which the scattered items' hashed cues spread
+// their drops and their sinks, in seconds: first guesses, to tune by eye.
+const SHOWER_DROP_SPREAD_SECONDS = 0.6;
+const SHOWER_SINK_SPREAD_SECONDS = 0.3;
 // How far an item sinks, as a multiple of its height, unitless, and how
 // long its sink takes, in seconds.
 const SINK_DEPTH_FACTOR = 2.5;
@@ -128,6 +132,12 @@ const ITEM_RESTING = "resting";
 const ITEM_SINKING = "sinking";
 const ITEM_WAITING = "waiting";
 
+// The scatter's shower phases, as the shader reads them: dropping, at
+// rest, and sinking.
+const SHOWER_DROPPING = 1;
+const SHOWER_RESTING = 0;
+const SHOWER_SINKING = -1;
+
 /** #### Creates the cake's motion, at rest on a resolved cake
  * - Creates every spring and the `values` object once, for the page's
  *   life: later cakes retarget them in place.
@@ -141,6 +151,11 @@ const ITEM_WAITING = "waiting";
  *   slots in use, the greatest drop offset above rest, `liftMeters`, and
  *   the tallest present kind's height, `reachMeters`. The cake's own
  *   decorations stand at rest.
+ * - The scatter falls and sinks as a shower, each item at its own hashed
+ *   cue: its `showerClock`, `showerSpread`, `showerPhase` and
+ *   `showerReachMeters` time it, and the shader applies them per item.
+ *   Its `offsetMeters` is the offset of the item whose cue is 1, the last
+ *   to move, and its `scale` stays at its rest scale through the sink.
  * @param cake The resolved cake, as resolveRecipe() returns it, with its
  *   `decorations`: `slots`, as placeDecorations() returns them, and
  *   `scatter`, as placeScatter() returns it.
@@ -522,7 +537,8 @@ const copyPart = (part) => ({
 
 /** #### Creates one decoration's state and values, empty
  * - Its `rotation` is nine numbers, column-major; its `color`, sRGB
- *   channels. The scatter uses the same shape, with `cellMeters`.
+ *   channels. The scatter uses the same shape, with `cellMeters` and its
+ *   shower's four numbers.
  */
 const createItem = () => ({
   cellMeters: 0,
@@ -543,6 +559,10 @@ const createItem = () => ({
   rotation: [1, 0, 0, 0, 1, 0, 0, 0, 1],
   roughness: 0,
   scale: 0,
+  showerClock: 0,
+  showerPhase: SHOWER_RESTING,
+  showerReachMeters: 0,
+  showerSpread: 0,
   xMeters: 0,
   zMeters: 0,
 });
@@ -771,7 +791,8 @@ const snapSpring = (spring) => {
 /** #### Starts every present decoration sinking from where it is
  * - Each slot starts `SLOT_STAGGER_SECONDS` after the last present one, but
  *   a candle starts at its cue, its share of `FLAME_SCATTER_SECONDS`; the
- *   scatter starts last of all. An item still waiting to drop is emptied.
+ *   scatter starts last of all, from its rest. An item still waiting to
+ *   drop is emptied.
  * - Allocates nothing.
  */
 const sinkDecorations = (decorations) => {
@@ -788,13 +809,17 @@ const sinkDecorations = (decorations) => {
       lastDelaySeconds = Math.max(lastDelaySeconds, delaySeconds);
     }
   }
+  const { scatter } = decorations;
   sinkItem(
-    decorations.scatter,
+    scatter,
     Math.max(
       order * SLOT_STAGGER_SECONDS,
       lastDelaySeconds + SLOT_STAGGER_SECONDS,
     ),
   );
+  // The shower's four numbers cannot say where each item was, so the
+  // scatter sinks from its rest, even mid drop.
+  scatter.fromMeters = 0;
 };
 
 /** #### Starts one item sinking from where it is, after a delay
@@ -869,7 +894,7 @@ const stepDecorations = (decorations, changeSeconds) => {
   for (let slot = 0; slot <= DECORATION_SLOTS; slot++) {
     const isScatter = slot === DECORATION_SLOTS;
     const item = isScatter ? decorations.scatter : decorations.items[slot];
-    stepItem(item, changeSeconds);
+    stepItem(item, changeSeconds, isScatter);
     if (item.phase === ITEM_EMPTY) continue;
     if (!isScatter) count = slot + 1;
     liftMeters = Math.max(liftMeters, item.offsetMeters);
@@ -887,20 +912,28 @@ const stepDecorations = (decorations, changeSeconds) => {
  * - Waiting, it starts its drop at its delay. Dropping, it falls from
  *   `DROP_HEIGHT_METERS` above its rest as under gravity, eased in, over
  *   `DROP_SECONDS`, and then rests.
+ * - The scatter drops and sinks as a shower: its items start over
+ *   `SHOWER_DROP_SPREAD_SECONDS` or `SHOWER_SINK_SPREAD_SECONDS`, each at
+ *   its cue, and its offset is the last item's. Its shower's clock and
+ *   spread are in `DROP_SECONDS` or `SINK_SECONDS`, its reach in metres,
+ *   and its scale stays at its rest scale until the sink ends.
  * - A candle's flame goes out linearly from where it was over
  *   `FLAME_OUT_SECONDS` from its sink's start, and an unlit candle at rest
  *   lights linearly over `FLAME_IN_SECONDS` from its cue after landing.
  *   Both are timed from the change, so a long frame skips ahead.
  * - Allocates nothing.
  */
-const stepItem = (item, changeSeconds) => {
+const stepItem = (item, changeSeconds, isScatter) => {
   const elapsedSeconds = changeSeconds - item.delaySeconds;
   if (item.phase === ITEM_SINKING) {
-    const progress = clampUnit(elapsedSeconds / SINK_SECONDS);
+    const spreadSeconds = isScatter ? SHOWER_SINK_SPREAD_SECONDS : 0;
+    const progress = clampUnit(
+      (elapsedSeconds - spreadSeconds) / SINK_SECONDS,
+    );
     const eased = 1 - (1 - progress) * (1 - progress);
     item.offsetMeters =
       item.fromMeters - SINK_DEPTH_FACTOR * item.heightMeters * eased;
-    item.scale = item.fromScale * (1 - progress * progress);
+    if (!isScatter) item.scale = item.fromScale * (1 - progress * progress);
     item.flame =
       item.fromFlame * (1 - clampUnit(elapsedSeconds / FLAME_OUT_SECONDS));
     if (progress >= 1) {
@@ -915,13 +948,17 @@ const stepItem = (item, changeSeconds) => {
     }
   }
   if (item.phase === ITEM_DROPPING) {
-    const progress = clampUnit(elapsedSeconds / DROP_SECONDS);
+    const spreadSeconds = isScatter ? SHOWER_DROP_SPREAD_SECONDS : 0;
+    const progress = clampUnit(
+      (elapsedSeconds - spreadSeconds) / DROP_SECONDS,
+    );
     item.offsetMeters = DROP_HEIGHT_METERS * (1 - progress * progress);
     if (progress >= 1) {
       item.offsetMeters = 0;
       item.phase = ITEM_RESTING;
     }
   }
+  if (isScatter) stepShower(item, elapsedSeconds);
   if (
     item.phase === ITEM_RESTING &&
     item.kindId === CANDLE_KIND_ID &&
@@ -953,5 +990,31 @@ const stepPart = (part, dt) => {
     const channel = COLOR_CHANNELS[index];
     stepSpring(color[channel], COLOR_SPRING, dt);
     values.color[channel] = color[channel].value;
+  }
+};
+
+/** #### Writes the scatter's shower from its phase, after it has stepped
+ * - Dropping, the clock and spread are in `DROP_SECONDS` and the reach is
+ *   `DROP_HEIGHT_METERS`; sinking, they are in `SINK_SECONDS` and the
+ *   reach is `SINK_DEPTH_FACTOR` of its height. Otherwise it rests, with
+ *   every number 0.
+ * - Allocates nothing.
+ */
+const stepShower = (item, elapsedSeconds) => {
+  if (item.phase === ITEM_DROPPING) {
+    item.showerClock = elapsedSeconds / DROP_SECONDS;
+    item.showerPhase = SHOWER_DROPPING;
+    item.showerReachMeters = DROP_HEIGHT_METERS;
+    item.showerSpread = SHOWER_DROP_SPREAD_SECONDS / DROP_SECONDS;
+  } else if (item.phase === ITEM_SINKING) {
+    item.showerClock = elapsedSeconds / SINK_SECONDS;
+    item.showerPhase = SHOWER_SINKING;
+    item.showerReachMeters = SINK_DEPTH_FACTOR * item.heightMeters;
+    item.showerSpread = SHOWER_SINK_SPREAD_SECONDS / SINK_SECONDS;
+  } else {
+    item.showerClock = 0;
+    item.showerPhase = SHOWER_RESTING;
+    item.showerReachMeters = 0;
+    item.showerSpread = 0;
   }
 };
